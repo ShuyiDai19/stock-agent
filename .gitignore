@@ -18,7 +18,7 @@ codex/**/.cycle-lock/
 codex/**/.codex/config.toml
 
 # Local application state
-state/
+/state/
 *.db
 *.sqlite
 *.sqlite3
