@@ -327,7 +327,47 @@ class SQLitePositionStateStore:
             raise
         finally:
             connection.close()
+    def list_by_status(
+        self,
+        *,
+        account_number: str,
+        statuses: tuple[PositionStateStatus, ...],
+    ) -> list[PositionRuntimeState]:
+        if not account_number.strip():
+            raise ValueError("account_number cannot be empty")
 
+        if not statuses:
+            return []
+
+        placeholders = ", ".join("?" for _ in statuses)
+        query = f"""
+            SELECT *
+            FROM position_state
+            WHERE account_number = ?
+              AND status IN ({placeholders})
+            ORDER BY opened_at ASC, position_id ASC
+        """
+
+        parameters = (
+            account_number,
+            *(status.value for status in statuses),
+        )
+
+        connection = self._connect()
+
+        try:
+            rows = connection.execute(
+                query,
+                parameters,
+            ).fetchall()
+        finally:
+            connection.close()
+
+        return [
+            self._row_to_state(row)
+            for row in rows
+        ]
+    
     @staticmethod
     def _row_to_state(
         row: sqlite3.Row,

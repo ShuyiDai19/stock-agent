@@ -13,6 +13,7 @@ from stock_agent.state import (
     PositionRuntimeState,
     PositionStateAlreadyExistsError,
     PositionStateNotFoundError,
+    PositionStateStatus,
     SQLitePositionStateStore,
 )
 
@@ -251,6 +252,56 @@ class SQLitePositionStateStoreTests(unittest.TestCase):
 
             with self.assertRaises(PositionStateNotFoundError):
                 store.update(missing, expected_version=1)
+    
+    def test_list_by_status_filters_account_and_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "stock_agent.db"
+            store = SQLitePositionStateStore(database_path)
+            store.initialize()
+
+            active = self.make_state()
+
+            closed = replace(
+                self.make_state(),
+                position_id="test-account:equity:MSFT:order-456",
+                symbol="MSFT",
+                opening_order_id="order-456",
+                remaining_quantity=Decimal("0"),
+                status=PositionStateStatus.CLOSED,
+            )
+
+            other_account = replace(
+                self.make_state(),
+                position_id="other-account:equity:NVDA:order-789",
+                account_number="other-account",
+                symbol="NVDA",
+                opening_order_id="order-789",
+            )
+
+            store.insert(active)
+            store.insert(closed)
+            store.insert(other_account)
+
+            results = store.list_by_status(
+                account_number="test-account-0000",
+                statuses=(PositionStateStatus.ACTIVE,),
+            )
+
+            self.assertEqual(results, [active])
+
+    def test_list_by_status_returns_empty_for_no_statuses(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "stock_agent.db"
+            store = SQLitePositionStateStore(database_path)
+            store.initialize()
+            store.insert(self.make_state())
+
+            results = store.list_by_status(
+                account_number="test-account-0000",
+                statuses=(),
+            )
+
+            self.assertEqual(results, [])
 
 if __name__ == "__main__":
     unittest.main()
