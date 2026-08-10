@@ -434,5 +434,129 @@ class TrailingStopEvaluatorTests(unittest.TestCase):
             PositionStateStatus.ACTIVE,
         )
 
+    def test_unknown_historical_high_suppresses_trailing_exit(
+        self,
+    ) -> None:
+        original = self.make_state()
+
+        armed_at = (
+            original.last_quote_at
+            + timedelta(minutes=5)
+        )
+
+        uncertain_state = replace(
+            original,
+            highest_executable_bid=Decimal("110"),
+            trailing_armed=True,
+            trailing_armed_at=armed_at,
+            historical_high_unknown=True,
+            last_quote_at=armed_at,
+            version=2,
+        )
+
+        observed_at = armed_at + timedelta(minutes=5)
+
+        result = evaluate_trailing_stop(
+            uncertain_state,
+            latest_bid=Decimal("107"),
+            observed_at=observed_at,
+        )
+
+        # This would normally exceed the 2% drawdown threshold,
+        # but the historical high is not authoritative.
+        self.assertEqual(
+            result.decision,
+            TrailingStopDecision.HOLD,
+        )
+
+        self.assertEqual(
+            result.state.status,
+            PositionStateStatus.ACTIVE,
+        )
+
+        self.assertTrue(
+            result.state.historical_high_unknown,
+        )
+
+    def test_unknown_historical_high_remains_unknown_after_new_quote(
+        self,
+    ) -> None:
+        original = replace(
+            self.make_state(),
+            historical_high_unknown=True,
+        )
+
+        observed_at = (
+            original.last_quote_at
+            + timedelta(minutes=5)
+        )
+
+        result = evaluate_trailing_stop(
+            original,
+            latest_bid=Decimal("103"),
+            observed_at=observed_at,
+        )
+
+        self.assertEqual(
+            result.state.highest_executable_bid,
+            Decimal("103"),
+        )
+
+        self.assertTrue(
+            result.state.historical_high_unknown,
+        )
+
+        self.assertEqual(
+            result.decision,
+            TrailingStopDecision.HOLD,
+        )
+
+    def test_unknown_historical_high_can_still_arm_trailing(
+        self,
+    ) -> None:
+        original = replace(
+            self.make_state(),
+            historical_high_unknown=True,
+        )
+
+        observed_at = (
+            original.last_quote_at
+            + timedelta(minutes=5)
+        )
+
+        result = evaluate_trailing_stop(
+            original,
+            latest_bid=Decimal("104"),
+            observed_at=observed_at,
+        )
+
+        self.assertTrue(
+            result.state.trailing_armed,
+        )
+
+        self.assertEqual(
+            result.state.trailing_armed_at,
+            observed_at,
+        )
+
+        self.assertTrue(
+            result.state.historical_high_unknown,
+        )
+
+        self.assertEqual(
+            result.state.highest_executable_bid,
+            Decimal("104"),
+        )
+
+        self.assertEqual(
+            result.decision,
+            TrailingStopDecision.HOLD,
+        )
+
+        self.assertEqual(
+            result.reason,
+            "trailing stop armed",
+        )
+
 if __name__ == "__main__":
     unittest.main()

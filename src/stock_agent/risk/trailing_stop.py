@@ -72,6 +72,7 @@ def evaluate_trailing_stop(
 
     should_exit = (
         updated_state.trailing_armed
+        and not updated_state.historical_high_unknown
         and latest_bid <= exit_threshold
     )
 
