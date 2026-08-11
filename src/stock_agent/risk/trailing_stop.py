@@ -35,6 +35,16 @@ def evaluate_trailing_stop(
     if state.status is not PositionStateStatus.ACTIVE:
         raise ValueError("trailing stop can only evaluate an active position")
 
+    if observed_at < state.last_quote_at:
+        raise ValueError(
+            "observed_at cannot be earlier than last_quote_at"
+        )
+
+    if observed_at == state.last_quote_at:
+        raise ValueError(
+            "observed_at must be later than last_quote_at"
+        )
+
     highest_bid = max(
         state.highest_executable_bid,
         latest_bid,

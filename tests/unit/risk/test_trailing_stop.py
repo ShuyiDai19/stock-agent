@@ -558,5 +558,74 @@ class TrailingStopEvaluatorTests(unittest.TestCase):
             "trailing stop armed",
         )
 
+    def test_rejects_quote_older_than_last_quote(
+        self,
+    ) -> None:
+        state = self.make_state()
+
+        stale_observed_at = (
+            state.last_quote_at
+            - timedelta(minutes=1)
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "observed_at cannot be earlier than last_quote_at",
+        ):
+            evaluate_trailing_stop(
+                state,
+                latest_bid=Decimal("105"),
+                observed_at=stale_observed_at,
+            )
+
+        # Pure function: rejected quote must not mutate the input state.
+        self.assertEqual(
+            state.highest_executable_bid,
+            Decimal("100"),
+        )
+        self.assertEqual(
+            state.last_quote_at,
+            datetime(
+                2026,
+                8,
+                1,
+                14,
+                0,
+                tzinfo=timezone.utc,
+            ),
+        )
+        self.assertEqual(
+            state.version,
+            1,
+        )
+
+    def test_rejects_quote_with_same_timestamp_as_last_quote(
+        self,
+    ) -> None:
+        state = self.make_state()
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "observed_at must be later than last_quote_at",
+        ):
+            evaluate_trailing_stop(
+                state,
+                latest_bid=Decimal("105"),
+                observed_at=state.last_quote_at,
+            )
+
+        # Rejected quote must not advance the state machine.
+        self.assertEqual(
+            state.highest_executable_bid,
+            Decimal("100"),
+        )
+        self.assertFalse(
+            state.trailing_armed,
+        )
+        self.assertEqual(
+            state.version,
+            1,
+        )
+
 if __name__ == "__main__":
     unittest.main()
