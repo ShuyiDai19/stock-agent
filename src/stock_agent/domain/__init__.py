@@ -14,6 +14,7 @@ from stock_agent.domain.models import (
     PositionSnapshot,
     TradeIntent,
 )
+from stock_agent.domain.quotes import QuoteSnapshot
 
 __all__ = [
     "AccountSnapshot",
@@ -28,4 +29,5 @@ __all__ = [
     "PositionSnapshot",
     "TimeInForce",
     "TradeIntent",
+    "QuoteSnapshot",
 ]

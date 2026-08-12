@@ -3,7 +3,10 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from stock_agent.domain import AssetType
+from stock_agent.domain import (
+    AssetType,
+    QuoteSnapshot,
+)
 from stock_agent.monitoring import TrailingStopMonitor
 from stock_agent.risk import TrailingStopDecision
 from stock_agent.state import (
@@ -100,16 +103,22 @@ class TrailingStopMonitorTests(unittest.TestCase):
             + timedelta(minutes=5)
         )
 
+        quote = QuoteSnapshot(
+            symbol="AAPL",
+            bid=Decimal("103"),
+            observed_at=observed_at,
+        )
+
         result = monitor.process_quote(
             original.position_id,
-            latest_bid=Decimal("103"),
-            observed_at=observed_at,
+            quote=quote,
         )
 
         self.assertEqual(
             store.get_call_count,
             1,
         )
+
         self.assertEqual(
             store.requested_position_id,
             original.position_id,
@@ -169,10 +178,15 @@ class TrailingStopMonitorTests(unittest.TestCase):
             + timedelta(minutes=5)
         )
 
+        quote = QuoteSnapshot(
+            symbol="AAPL",
+            bid=Decimal("107.80"),
+            observed_at=observed_at,
+        )
+
         result = monitor.process_quote(
             armed_state.position_id,
-            latest_bid=Decimal("107.80"),
-            observed_at=observed_at,
+            quote=quote,
         )
 
         self.assertEqual(
@@ -180,21 +194,18 @@ class TrailingStopMonitorTests(unittest.TestCase):
             TrailingStopDecision.EXIT,
         )
 
-        # EXIT is only a risk decision.
+
         # The position remains active until execution succeeds.
         self.assertEqual(
             result.state.status,
             PositionStateStatus.ACTIVE,
         )
 
-        # The evaluated runtime state is still persisted.
         self.assertEqual(
             store.updated_state,
             result.state,
         )
 
-        # Optimistic concurrency uses the state version
-        # that was read before evaluation.
         self.assertEqual(
             store.expected_version,
             2,
@@ -228,60 +239,29 @@ class TrailingStopMonitorTests(unittest.TestCase):
             + timedelta(minutes=5)
         )
 
+        quote = QuoteSnapshot(
+            symbol="AAPL",
+            bid=Decimal("103"),
+            observed_at=observed_at,
+        )
+
         with self.assertRaisesRegex(
             ConcurrentStateUpdateError,
             "version conflict",
         ):
             monitor.process_quote(
                 original.position_id,
-                latest_bid=Decimal("103"),
-                observed_at=observed_at,
+                quote=quote,
             )
 
         self.assertEqual(
             store.get_call_count,
             1,
         )
+
         self.assertEqual(
             store.update_call_count,
             1,
-        )
-
-    def test_process_quote_does_not_persist_when_bid_is_invalid(
-        self,
-    ) -> None:
-        original = self.make_state()
-
-        store = FakePositionStateStore(
-            state=original,
-        )
-        monitor = TrailingStopMonitor(store)
-
-        observed_at = (
-            original.last_quote_at
-            + timedelta(minutes=5)
-        )
-
-        with self.assertRaisesRegex(
-            ValueError,
-            "latest_bid must be greater than zero",
-        ):
-            monitor.process_quote(
-                original.position_id,
-                latest_bid=Decimal("0"),
-                observed_at=observed_at,
-            )
-
-        self.assertEqual(
-            store.get_call_count,
-            1,
-        )
-        self.assertEqual(
-            store.update_call_count,
-            0,
-        )
-        self.assertIsNone(
-            store.updated_state,
         )
 
     def test_process_quote_does_not_persist_inactive_position(
@@ -305,24 +285,31 @@ class TrailingStopMonitorTests(unittest.TestCase):
             + timedelta(minutes=5)
         )
 
+        quote = QuoteSnapshot(
+            symbol="AAPL",
+            bid=Decimal("101"),
+            observed_at=observed_at,
+        )
+
         with self.assertRaisesRegex(
             ValueError,
             "active position",
         ):
             monitor.process_quote(
                 closed_state.position_id,
-                latest_bid=Decimal("101"),
-                observed_at=observed_at,
+                quote=quote,
             )
 
         self.assertEqual(
             store.get_call_count,
             1,
         )
+
         self.assertEqual(
             store.update_call_count,
             0,
         )
+
         self.assertIsNone(
             store.updated_state,
         )
@@ -346,14 +333,19 @@ class TrailingStopMonitorTests(unittest.TestCase):
             tzinfo=timezone.utc,
         )
 
+        quote = QuoteSnapshot(
+            symbol="AAPL",
+            bid=Decimal("103"),
+            observed_at=observed_at,
+        )
+
         with self.assertRaisesRegex(
             PositionStateNotFoundError,
             "position state not found",
         ):
             monitor.process_quote(
                 position_id,
-                latest_bid=Decimal("103"),
-                observed_at=observed_at,
+                quote=quote,
             )
 
         self.assertEqual(
@@ -390,17 +382,21 @@ class TrailingStopMonitorTests(unittest.TestCase):
             - timedelta(minutes=1)
         )
 
+        quote = QuoteSnapshot(
+            symbol="AAPL",
+            bid=Decimal("105"),
+            observed_at=stale_observed_at,
+        )
+
         with self.assertRaisesRegex(
             ValueError,
             "observed_at cannot be earlier than last_quote_at",
         ):
             monitor.process_quote(
                 original.position_id,
-                latest_bid=Decimal("105"),
-                observed_at=stale_observed_at,
+                quote=quote,
             )
 
-        # The monitor must read the latest persisted state first.
         self.assertEqual(
             store.get_call_count,
             1,
@@ -411,7 +407,6 @@ class TrailingStopMonitorTests(unittest.TestCase):
             original.position_id,
         )
 
-        # Evaluation failed, so persistence must never happen.
         self.assertEqual(
             store.update_call_count,
             0,
@@ -431,17 +426,21 @@ class TrailingStopMonitorTests(unittest.TestCase):
         )
         monitor = TrailingStopMonitor(store)
 
+        quote = QuoteSnapshot(
+            symbol="AAPL",
+            bid=Decimal("105"),
+            observed_at=original.last_quote_at,
+        )
+
         with self.assertRaisesRegex(
             ValueError,
             "observed_at must be later than last_quote_at",
         ):
             monitor.process_quote(
                 original.position_id,
-                latest_bid=Decimal("105"),
-                observed_at=original.last_quote_at,
+                quote=quote,
             )
 
-        # Monitor must read the latest state first.
         self.assertEqual(
             store.get_call_count,
             1,
@@ -452,7 +451,53 @@ class TrailingStopMonitorTests(unittest.TestCase):
             original.position_id,
         )
 
-        # Rejected duplicate/ambiguous quote must never be persisted.
+        self.assertEqual(
+            store.update_call_count,
+            0,
+        )
+
+        self.assertIsNone(
+            store.updated_state,
+        )
+
+    def test_process_quote_rejects_symbol_mismatch(
+        self,
+    ) -> None:
+        original = self.make_state()
+
+        store = FakePositionStateStore(
+            state=original,
+        )
+        monitor = TrailingStopMonitor(store)
+
+        quote = QuoteSnapshot(
+            symbol="MSFT",
+            bid=Decimal("103"),
+            observed_at=(
+                original.last_quote_at
+                + timedelta(minutes=5)
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "quote symbol does not match position symbol",
+        ):
+            monitor.process_quote(
+                original.position_id,
+                quote=quote,
+            )
+
+        self.assertEqual(
+            store.get_call_count,
+            1,
+        )
+
+        self.assertEqual(
+            store.requested_position_id,
+            original.position_id,
+        )
+
         self.assertEqual(
             store.update_call_count,
             0,
