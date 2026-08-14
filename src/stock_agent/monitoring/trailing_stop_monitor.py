@@ -1,4 +1,4 @@
-from stock_agent.domain import QuoteSnapshot
+from stock_agent.market_data import QuoteProvider
 from stock_agent.risk import (
     TrailingStopEvaluation,
     evaluate_trailing_stop,
@@ -13,14 +13,14 @@ class TrailingStopMonitor:
     def __init__(
         self,
         store: PositionStateStore,
+        quote_provider: QuoteProvider,
     ) -> None:
         self._store = store
+        self._quote_provider = quote_provider
 
-    def process_quote(
+    def process_position(
         self,
         position_id: str,
-        *,
-        quote: QuoteSnapshot,
     ) -> TrailingStopEvaluation:
         state = self._store.get(position_id)
 
@@ -28,6 +28,10 @@ class TrailingStopMonitor:
             raise PositionStateNotFoundError(
                 f"position state not found: {position_id}"
             )
+
+        quote = self._quote_provider.get_quote(
+            state.symbol
+        )
 
         if quote.symbol != state.symbol:
             raise ValueError(
