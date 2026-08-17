@@ -5,7 +5,11 @@ from stock_agent.risk import (
 )
 from stock_agent.state import (
     PositionStateNotFoundError,
+    PositionStateStatus,
     PositionStateStore,
+)
+from stock_agent.monitoring.outcomes import (
+    PositionMonitorOutcome,
 )
 
 
@@ -50,3 +54,40 @@ class TrailingStopMonitor:
         )
 
         return result
+
+    def monitor_active_positions(
+        self,
+        *,
+        account_number: str,
+    ) -> list[PositionMonitorOutcome]:
+        states = self._store.list_by_status(
+            account_number=account_number,
+            statuses=(PositionStateStatus.ACTIVE,),
+        )
+
+        outcomes: list[PositionMonitorOutcome] = []
+
+        for state in states:
+            try:
+                evaluation = self.process_position(
+                    state.position_id,
+                )
+            except Exception as error:
+                outcomes.append(
+                    PositionMonitorOutcome(
+                        position_id=state.position_id,
+                        symbol=state.symbol,
+                        error=error,
+                    )
+                )
+                continue
+
+            outcomes.append(
+                PositionMonitorOutcome(
+                    position_id=state.position_id,
+                    symbol=state.symbol,
+                    evaluation=evaluation,
+                )
+            )
+
+        return outcomes
