@@ -782,6 +782,10 @@ class TrailingStopMonitorTests(unittest.TestCase):
             results[0].evaluation,
         )
 
+        self.assertIsNone(
+            results[0].exit_intent,
+        )
+
         self.assertEqual(
             results[0].evaluation.decision,
             TrailingStopDecision.HOLD,
@@ -909,6 +913,10 @@ class TrailingStopMonitorTests(unittest.TestCase):
             str(by_symbol["MSFT"].error),
         )
 
+        self.assertIsNone(
+            by_symbol["MSFT"].exit_intent,
+        )
+
         self.assertTrue(
             by_symbol["NVDA"].succeeded,
         )
@@ -932,6 +940,95 @@ class TrailingStopMonitorTests(unittest.TestCase):
                 "AAPL",
                 "NVDA",
             ],
+        )
+
+    def test_monitor_active_positions_builds_exit_intent_for_exit(
+        self,
+    ) -> None:
+        original = self.make_state()
+
+        armed_at = (
+            original.last_quote_at
+            + timedelta(minutes=5)
+        )
+
+        armed_state = replace(
+            original,
+            highest_executable_bid=Decimal("110"),
+            trailing_armed=True,
+            trailing_armed_at=armed_at,
+            last_quote_at=armed_at,
+            version=2,
+        )
+
+        quote = QuoteSnapshot(
+            symbol="AAPL",
+            bid=Decimal("107.80"),
+            observed_at=(
+                armed_at
+                + timedelta(minutes=5)
+            ),
+        )
+
+        store = FakePositionStateStore(
+            state=armed_state,
+        )
+
+        quote_provider = FakeQuoteProvider(
+            quote=quote,
+        )
+
+        monitor = TrailingStopMonitor(
+            store,
+            quote_provider,
+        )
+
+        outcomes = monitor.monitor_active_positions(
+            account_number=armed_state.account_number,
+        )
+
+        self.assertEqual(
+            len(outcomes),
+            1,
+        )
+
+        outcome = outcomes[0]
+
+        self.assertTrue(
+            outcome.succeeded,
+        )
+
+        self.assertIsNotNone(
+            outcome.evaluation,
+        )
+
+        self.assertEqual(
+            outcome.evaluation.decision,
+            TrailingStopDecision.EXIT,
+        )
+
+        self.assertIsNotNone(
+            outcome.exit_intent,
+        )
+
+        self.assertEqual(
+            outcome.exit_intent.position_id,
+            armed_state.position_id,
+        )
+
+        self.assertEqual(
+            outcome.exit_intent.symbol,
+            "AAPL",
+        )
+
+        self.assertEqual(
+            outcome.exit_intent.quantity,
+            armed_state.remaining_quantity,
+        )
+
+        self.assertEqual(
+            outcome.exit_intent.triggered_at,
+            outcome.evaluation.state.last_quote_at,
         )
 
 

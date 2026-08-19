@@ -1,4 +1,5 @@
 from stock_agent.market_data import QuoteProvider
+from stock_agent.execution import build_exit_intent
 from stock_agent.risk import (
     TrailingStopEvaluation,
     evaluate_trailing_stop,
@@ -82,11 +83,16 @@ class TrailingStopMonitor:
                 )
                 continue
 
+            exit_intent = build_exit_intent(
+                evaluation,
+            )
+
             outcomes.append(
                 PositionMonitorOutcome(
                     position_id=state.position_id,
                     symbol=state.symbol,
                     evaluation=evaluation,
+                    exit_intent=exit_intent,
                 )
             )
 
