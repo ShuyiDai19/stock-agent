@@ -10,6 +10,9 @@ from stock_agent.execution import (
     ExecutionStatus,
     ExitIntent,
 )
+from stock_agent.brokers.robinhood.client import (
+    RobinhoodBrokerClient,
+)
 
 
 class DryRunRobinhoodExitExecutor:
@@ -39,4 +42,31 @@ class DryRunRobinhoodExitExecutor:
             submitted_at=self._clock(),
             broker_order_id=None,
             message="Robinhood exit order previewed; no order submitted",
+        )
+
+class LiveRobinhoodExitExecutor:
+    def __init__(
+        self,
+        client: RobinhoodBrokerClient,
+    ) -> None:
+        self._client = client
+
+    def execute(
+        self,
+        intent: ExitIntent,
+    ) -> ExecutionResult:
+        request = build_robinhood_exit_order_request(
+            intent
+        )
+
+        receipt = self._client.submit_exit_order(
+            request
+        )
+
+        return ExecutionResult(
+            position_id=intent.position_id,
+            status=ExecutionStatus.SUBMITTED,
+            submitted_at=receipt.submitted_at,
+            broker_order_id=receipt.broker_order_id,
+            message="Robinhood exit order submitted",
         )

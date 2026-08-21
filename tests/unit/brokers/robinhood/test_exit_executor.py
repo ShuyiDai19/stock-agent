@@ -4,7 +4,10 @@ from decimal import Decimal
 
 from stock_agent.brokers.robinhood import (
     DryRunRobinhoodExitExecutor,
+    LiveRobinhoodExitExecutor,
     RobinhoodExitAction,
+    RobinhoodExitOrderRequest,
+    RobinhoodOrderReceipt,
 )
 from stock_agent.domain import AssetType
 from stock_agent.execution import (
@@ -13,6 +16,35 @@ from stock_agent.execution import (
     ExitReason,
 )
 
+class FakeRobinhoodClient:
+    def __init__(
+        self,
+        *,
+        receipt: RobinhoodOrderReceipt | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.receipt = receipt
+        self.error = error
+
+        self.submit_call_count = 0
+        self.received_request = None
+
+    def submit_exit_order(
+        self,
+        request: RobinhoodExitOrderRequest,
+    ) -> RobinhoodOrderReceipt:
+        self.submit_call_count += 1
+        self.received_request = request
+
+        if self.error is not None:
+            raise self.error
+
+        if self.receipt is None:
+            raise RuntimeError(
+                "fake Robinhood receipt was not configured"
+            )
+
+        return self.receipt
 
 class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
     def test_previews_equity_sell_without_submitting_order(
@@ -211,6 +243,198 @@ class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
             executor.last_request,
         )
 
+    def test_live_executor_submits_equity_exit_order(
+        self,
+    ) -> None:
+        intent = ExitIntent(
+            position_id="account-0000:equity:AAPL:order-123",
+            account_number="account-0000",
+            asset_type=AssetType.EQUITY,
+            symbol="AAPL",
+            quantity=Decimal("0.031"),
+            reason=ExitReason.TRAILING_STOP,
+            triggered_at=datetime(
+                2026,
+                8,
+                21,
+                20,
+                0,
+                tzinfo=timezone.utc,
+            ),
+            option_id=None,
+        )
+
+        submitted_at = datetime(
+            2026,
+            8,
+            21,
+            20,
+            1,
+            tzinfo=timezone.utc,
+        )
+
+        receipt = RobinhoodOrderReceipt(
+            broker_order_id="broker-order-123",
+            submitted_at=submitted_at,
+        )
+
+        client = FakeRobinhoodClient(
+            receipt=receipt,
+        )
+
+        executor = LiveRobinhoodExitExecutor(
+            client
+        )
+
+        result = executor.execute(
+            intent
+        )
+
+        self.assertEqual(
+            client.submit_call_count,
+            1,
+        )
+
+        self.assertIsNotNone(
+            client.received_request,
+        )
+
+        request = client.received_request
+
+        self.assertEqual(
+            request.position_id,
+            intent.position_id,
+        )
+
+        self.assertEqual(
+            request.symbol,
+            "AAPL",
+        )
+
+        self.assertEqual(
+            request.quantity,
+            Decimal("0.031"),
+        )
+
+        self.assertEqual(
+            request.action,
+            RobinhoodExitAction.EQUITY_SELL,
+        )
+
+        self.assertEqual(
+            result.status,
+            ExecutionStatus.SUBMITTED,
+        )
+
+        self.assertEqual(
+            result.broker_order_id,
+            "broker-order-123",
+        )
+
+        self.assertEqual(
+            result.submitted_at,
+            submitted_at,
+        )
+
+    def test_live_executor_propagates_client_error(
+        self,
+    ) -> None:
+        intent = ExitIntent(
+            position_id="account-0000:equity:AAPL:order-123",
+            account_number="account-0000",
+            asset_type=AssetType.EQUITY,
+            symbol="AAPL",
+            quantity=Decimal("0.031"),
+            reason=ExitReason.TRAILING_STOP,
+            triggered_at=datetime.now(
+                timezone.utc
+            ),
+            option_id=None,
+        )
+
+        client = FakeRobinhoodClient(
+            error=RuntimeError(
+                "Robinhood submission failed"
+            ),
+        )
+
+        executor = LiveRobinhoodExitExecutor(
+            client
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Robinhood submission failed",
+        ):
+            executor.execute(
+                intent
+            )
+
+        self.assertEqual(
+            client.submit_call_count,
+            1,
+        )
+
+        self.assertIsNotNone(
+            client.received_request,
+        )
+
+    def test_live_executor_submits_option_sell_to_close(
+        self,
+    ) -> None:
+        intent = ExitIntent(
+            position_id="account-0000:option:AAPL:order-456",
+            account_number="account-0000",
+            asset_type=AssetType.OPTION,
+            symbol="AAPL",
+            quantity=Decimal("1"),
+            reason=ExitReason.TRAILING_STOP,
+            triggered_at=datetime.now(
+                timezone.utc
+            ),
+            option_id="option-contract-123",
+        )
+
+        client = FakeRobinhoodClient(
+            receipt=RobinhoodOrderReceipt(
+                broker_order_id="broker-option-456",
+                submitted_at=datetime.now(
+                    timezone.utc
+                ),
+            ),
+        )
+
+        executor = LiveRobinhoodExitExecutor(
+            client
+        )
+
+        result = executor.execute(
+            intent
+        )
+
+        self.assertEqual(
+            client.submit_call_count,
+            1,
+        )
+
+        self.assertIsNotNone(
+            client.received_request,
+        )
+
+        self.assertEqual(
+            client.received_request.action,
+            RobinhoodExitAction.OPTION_SELL_TO_CLOSE,
+        )
+
+        self.assertEqual(
+            client.received_request.option_id,
+            "option-contract-123",
+        )
+
+        self.assertEqual(
+            result.status,
+            ExecutionStatus.SUBMITTED,
+        )
 
 if __name__ == "__main__":
     unittest.main()
