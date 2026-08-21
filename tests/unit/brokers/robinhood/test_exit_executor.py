@@ -7,6 +7,8 @@ from stock_agent.brokers.robinhood import (
     LiveRobinhoodExitExecutor,
     RobinhoodExitAction,
     RobinhoodExitOrderRequest,
+    RobinhoodExitPriceQuote,
+    RobinhoodExitSubmission,
     RobinhoodOrderReceipt,
 )
 from stock_agent.domain import AssetType
@@ -15,6 +17,7 @@ from stock_agent.execution import (
     ExitIntent,
     ExitReason,
 )
+
 
 class FakeRobinhoodClient:
     def __init__(
@@ -27,14 +30,14 @@ class FakeRobinhoodClient:
         self.error = error
 
         self.submit_call_count = 0
-        self.received_request = None
+        self.received_submission = None
 
     def submit_exit_order(
         self,
-        request: RobinhoodExitOrderRequest,
+        submission: RobinhoodExitSubmission,
     ) -> RobinhoodOrderReceipt:
         self.submit_call_count += 1
-        self.received_request = request
+        self.received_submission = submission
 
         if self.error is not None:
             raise self.error
@@ -45,6 +48,41 @@ class FakeRobinhoodClient:
             )
 
         return self.receipt
+
+
+class FakeRobinhoodExitPriceProvider:
+    def __init__(
+        self,
+        quote: RobinhoodExitPriceQuote,
+    ) -> None:
+        self.quote = quote
+        self.get_exit_price_call_count = 0
+        self.received_request = None
+
+    def get_exit_price(
+        self,
+        request: RobinhoodExitOrderRequest,
+    ) -> RobinhoodExitPriceQuote:
+        self.get_exit_price_call_count += 1
+        self.received_request = request
+        return self.quote
+
+
+class FailingRobinhoodExitPriceProvider:
+    def __init__(
+        self,
+        error: Exception,
+    ) -> None:
+        self.error = error
+        self.get_exit_price_call_count = 0
+
+    def get_exit_price(
+        self,
+        request: RobinhoodExitOrderRequest,
+    ) -> RobinhoodExitPriceQuote:
+        self.get_exit_price_call_count += 1
+        raise self.error
+
 
 class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
     def test_previews_equity_sell_without_submitting_order(
@@ -273,21 +311,50 @@ class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
             tzinfo=timezone.utc,
         )
 
-        receipt = RobinhoodOrderReceipt(
-            broker_order_id="broker-order-123",
-            submitted_at=submitted_at,
+        client = FakeRobinhoodClient(
+            receipt=RobinhoodOrderReceipt(
+                broker_order_id="broker-order-123",
+                submitted_at=submitted_at,
+            ),
         )
 
-        client = FakeRobinhoodClient(
-            receipt=receipt,
+        price_provider = FakeRobinhoodExitPriceProvider(
+            RobinhoodExitPriceQuote(
+                symbol="AAPL",
+                executable_bid=Decimal("107.55"),
+                observed_at=datetime(
+                    2026,
+                    8,
+                    21,
+                    20,
+                    0,
+                    30,
+                    tzinfo=timezone.utc,
+                ),
+            )
         )
 
         executor = LiveRobinhoodExitExecutor(
-            client
+            client,
+            price_provider,
         )
 
         result = executor.execute(
             intent
+        )
+
+        self.assertEqual(
+            price_provider.get_exit_price_call_count,
+            1,
+        )
+
+        self.assertIsNotNone(
+            price_provider.received_request,
+        )
+
+        self.assertEqual(
+            price_provider.received_request.symbol,
+            "AAPL",
         )
 
         self.assertEqual(
@@ -296,29 +363,34 @@ class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(
-            client.received_request,
+            client.received_submission,
         )
 
-        request = client.received_request
+        submission = client.received_submission
 
         self.assertEqual(
-            request.position_id,
+            submission.request.position_id,
             intent.position_id,
         )
 
         self.assertEqual(
-            request.symbol,
+            submission.request.symbol,
             "AAPL",
         )
 
         self.assertEqual(
-            request.quantity,
+            submission.request.quantity,
             Decimal("0.031"),
         )
 
         self.assertEqual(
-            request.action,
+            submission.request.action,
             RobinhoodExitAction.EQUITY_SELL,
+        )
+
+        self.assertEqual(
+            submission.limit_price,
+            Decimal("107.55"),
         )
 
         self.assertEqual(
@@ -358,8 +430,19 @@ class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
             ),
         )
 
+        price_provider = FakeRobinhoodExitPriceProvider(
+            RobinhoodExitPriceQuote(
+                symbol="AAPL",
+                executable_bid=Decimal("107.55"),
+                observed_at=datetime.now(
+                    timezone.utc
+                ),
+            )
+        )
+
         executor = LiveRobinhoodExitExecutor(
-            client
+            client,
+            price_provider,
         )
 
         with self.assertRaisesRegex(
@@ -371,12 +454,17 @@ class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
             )
 
         self.assertEqual(
+            price_provider.get_exit_price_call_count,
+            1,
+        )
+
+        self.assertEqual(
             client.submit_call_count,
             1,
         )
 
         self.assertIsNotNone(
-            client.received_request,
+            client.received_submission,
         )
 
     def test_live_executor_submits_option_sell_to_close(
@@ -404,12 +492,29 @@ class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
             ),
         )
 
+        price_provider = FakeRobinhoodExitPriceProvider(
+            RobinhoodExitPriceQuote(
+                symbol="AAPL",
+                executable_bid=Decimal("2.40"),
+                observed_at=datetime.now(
+                    timezone.utc
+                ),
+                option_id="option-contract-123",
+            )
+        )
+
         executor = LiveRobinhoodExitExecutor(
-            client
+            client,
+            price_provider,
         )
 
         result = executor.execute(
             intent
+        )
+
+        self.assertEqual(
+            price_provider.get_exit_price_call_count,
+            1,
         )
 
         self.assertEqual(
@@ -418,23 +523,82 @@ class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(
-            client.received_request,
+            client.received_submission,
         )
 
+        submission = client.received_submission
+
         self.assertEqual(
-            client.received_request.action,
+            submission.request.action,
             RobinhoodExitAction.OPTION_SELL_TO_CLOSE,
         )
 
         self.assertEqual(
-            client.received_request.option_id,
+            submission.request.option_id,
             "option-contract-123",
+        )
+
+        self.assertEqual(
+            submission.limit_price,
+            Decimal("2.40"),
         )
 
         self.assertEqual(
             result.status,
             ExecutionStatus.SUBMITTED,
         )
+
+    def test_live_executor_does_not_submit_when_pricing_fails(
+        self,
+    ) -> None:
+        intent = ExitIntent(
+            position_id="account-0000:equity:AAPL:order-123",
+            account_number="account-0000",
+            asset_type=AssetType.EQUITY,
+            symbol="AAPL",
+            quantity=Decimal("0.031"),
+            reason=ExitReason.TRAILING_STOP,
+            triggered_at=datetime.now(
+                timezone.utc
+            ),
+            option_id=None,
+        )
+
+        client = FakeRobinhoodClient()
+
+        price_provider = FailingRobinhoodExitPriceProvider(
+            RuntimeError(
+                "exit quote unavailable"
+            )
+        )
+
+        executor = LiveRobinhoodExitExecutor(
+            client,
+            price_provider,
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "exit quote unavailable",
+        ):
+            executor.execute(
+                intent
+            )
+
+        self.assertEqual(
+            price_provider.get_exit_price_call_count,
+            1,
+        )
+
+        self.assertEqual(
+            client.submit_call_count,
+            0,
+        )
+
+        self.assertIsNone(
+            client.received_submission,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

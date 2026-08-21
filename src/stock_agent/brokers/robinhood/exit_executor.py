@@ -13,6 +13,10 @@ from stock_agent.execution import (
 from stock_agent.brokers.robinhood.client import (
     RobinhoodBrokerClient,
 )
+from stock_agent.brokers.robinhood.pricing import (
+    RobinhoodExitPriceProvider,
+    build_robinhood_exit_submission,
+)
 
 
 class DryRunRobinhoodExitExecutor:
@@ -48,8 +52,10 @@ class LiveRobinhoodExitExecutor:
     def __init__(
         self,
         client: RobinhoodBrokerClient,
+        price_provider: RobinhoodExitPriceProvider,
     ) -> None:
         self._client = client
+        self._price_provider = price_provider
 
     def execute(
         self,
@@ -59,8 +65,17 @@ class LiveRobinhoodExitExecutor:
             intent
         )
 
-        receipt = self._client.submit_exit_order(
+        quote = self._price_provider.get_exit_price(
             request
+        )
+
+        submission = build_robinhood_exit_submission(
+            request,
+            quote,
+        )
+
+        receipt = self._client.submit_exit_order(
+            submission
         )
 
         return ExecutionResult(

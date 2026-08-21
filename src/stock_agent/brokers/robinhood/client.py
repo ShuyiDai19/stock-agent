@@ -2,8 +2,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from stock_agent.brokers.robinhood.orders import (
-    RobinhoodExitOrderRequest,
+from stock_agent.brokers.robinhood.submissions import (
+    RobinhoodExitSubmission,
 )
 
 
@@ -30,6 +30,6 @@ class RobinhoodOrderReceipt:
 class RobinhoodBrokerClient(Protocol):
     def submit_exit_order(
         self,
-        request: RobinhoodExitOrderRequest,
+        submission: RobinhoodExitSubmission,
     ) -> RobinhoodOrderReceipt:
         ...

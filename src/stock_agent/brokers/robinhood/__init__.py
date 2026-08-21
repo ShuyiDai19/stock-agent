@@ -14,6 +14,22 @@ from stock_agent.brokers.robinhood.exit_executor import (
     DryRunRobinhoodExitExecutor,
     LiveRobinhoodExitExecutor,
 )
+from stock_agent.brokers.robinhood.errors import (
+    LiveExecutionDisabledError,
+)
+from stock_agent.brokers.robinhood.guarded_client import (
+    GuardedRobinhoodBrokerClient,
+)
+from stock_agent.brokers.robinhood.submissions import (
+    RobinhoodExitSubmission,
+    RobinhoodOrderType,
+    RobinhoodTimeInForce,
+)
+from stock_agent.brokers.robinhood.pricing import (
+    RobinhoodExitPriceProvider,
+    RobinhoodExitPriceQuote,
+    build_robinhood_exit_submission,
+)
 
 __all__ = [
     "DryRunRobinhoodExitExecutor",
@@ -23,4 +39,12 @@ __all__ = [
     "RobinhoodOrderReceipt",
     "build_robinhood_exit_order_request",
     "LiveRobinhoodExitExecutor",
+    "GuardedRobinhoodBrokerClient",
+    "LiveExecutionDisabledError",
+    "RobinhoodExitSubmission",
+    "RobinhoodOrderType",
+    "RobinhoodTimeInForce",
+    "RobinhoodExitPriceProvider",
+    "RobinhoodExitPriceQuote",
+    "build_robinhood_exit_submission",
 ]
