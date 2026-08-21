@@ -4,6 +4,7 @@ from enum import Enum
 
 
 class ExecutionStatus(str, Enum):
+    PREVIEWED = "previewed"
     SUBMITTED = "submitted"
     REJECTED = "rejected"
 

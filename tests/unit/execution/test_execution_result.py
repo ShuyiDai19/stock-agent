@@ -104,6 +104,28 @@ class ExecutionResultTests(unittest.TestCase):
                 ),
             )
 
+    def test_creates_previewed_execution_result(self) -> None:
+        result = ExecutionResult(
+            position_id="account-0000:equity:AAPL:order-123",
+            status=ExecutionStatus.PREVIEWED,
+            submitted_at=datetime.now(timezone.utc),
+            message="dry-run order preview",
+        )
+
+        self.assertEqual(
+            result.status,
+            ExecutionStatus.PREVIEWED,
+        )
+
+        self.assertIsNone(
+            result.broker_order_id,
+        )
+
+        self.assertEqual(
+            result.message,
+            "dry-run order preview",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
