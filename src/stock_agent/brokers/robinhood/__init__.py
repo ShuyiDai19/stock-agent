@@ -22,6 +22,7 @@ from stock_agent.brokers.robinhood.guarded_client import (
 )
 from stock_agent.brokers.robinhood.submissions import (
     RobinhoodExitSubmission,
+    RobinhoodMarketHours,
     RobinhoodOrderType,
     RobinhoodTimeInForce,
 )
@@ -30,6 +31,10 @@ from stock_agent.brokers.robinhood.pricing import (
     RobinhoodExitPriceQuote,
     build_robinhood_exit_submission,
 )
+from stock_agent.brokers.robinhood.config import (
+    parse_live_execution_enabled,
+)
+
 
 __all__ = [
     "DryRunRobinhoodExitExecutor",
@@ -47,4 +52,6 @@ __all__ = [
     "RobinhoodExitPriceProvider",
     "RobinhoodExitPriceQuote",
     "build_robinhood_exit_submission",
+    "parse_live_execution_enabled",
+    "RobinhoodMarketHours",
 ]
