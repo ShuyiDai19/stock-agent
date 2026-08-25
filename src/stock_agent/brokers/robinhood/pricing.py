@@ -8,13 +8,9 @@ from stock_agent.brokers.robinhood.orders import (
 )
 from stock_agent.brokers.robinhood.submissions import (
     RobinhoodExitSubmission,
-)
-from stock_agent.domain import AssetType
-
-from stock_agent.brokers.robinhood.submissions import (
-    RobinhoodExitSubmission,
     RobinhoodOrderType,
 )
+from stock_agent.domain import AssetType
 
 
 @dataclass(frozen=True)
@@ -65,34 +61,34 @@ class RobinhoodExitPriceProvider(Protocol):
         ...
 
 
-    def build_robinhood_exit_submission(
-        request: RobinhoodExitOrderRequest,
-        quote: RobinhoodExitPriceQuote,
-    ) -> RobinhoodExitSubmission:
-        if quote.symbol != request.symbol:
-            raise ValueError(
-                "exit price quote symbol does not match request symbol"
-            )
-
-        if quote.option_id != request.option_id:
-            raise ValueError(
-                "exit price quote option_id does not match request option_id"
-            )
-
-        if request.asset_type is AssetType.EQUITY:
-            return RobinhoodExitSubmission(
-                request=request,
-                order_type=RobinhoodOrderType.MARKET,
-                limit_price=None,
-            )
-
-        if request.asset_type is AssetType.OPTION:
-            return RobinhoodExitSubmission(
-                request=request,
-                order_type=RobinhoodOrderType.LIMIT,
-                limit_price=quote.executable_bid,
-            )
-
+def build_robinhood_exit_submission(
+    request: RobinhoodExitOrderRequest,
+    quote: RobinhoodExitPriceQuote,
+) -> RobinhoodExitSubmission:
+    if quote.symbol != request.symbol:
         raise ValueError(
-            f"unsupported asset type: {request.asset_type}"
+            "exit price quote symbol does not match request symbol"
         )
+
+    if quote.option_id != request.option_id:
+        raise ValueError(
+            "exit price quote option_id does not match request option_id"
+        )
+
+    if request.asset_type is AssetType.EQUITY:
+        return RobinhoodExitSubmission(
+            request=request,
+            order_type=RobinhoodOrderType.MARKET,
+            limit_price=None,
+        )
+
+    if request.asset_type is AssetType.OPTION:
+        return RobinhoodExitSubmission(
+            request=request,
+            order_type=RobinhoodOrderType.LIMIT,
+            limit_price=quote.executable_bid,
+        )
+
+    raise ValueError(
+        f"unsupported asset type: {request.asset_type}"
+    )

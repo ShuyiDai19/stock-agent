@@ -9,6 +9,7 @@ from stock_agent.brokers.robinhood import (
     RobinhoodOrderType,
     RobinhoodTimeInForce,
     build_robinhood_exit_submission,
+    RobinhoodMarketHours,
 )
 from stock_agent.domain import AssetType
 
@@ -27,7 +28,7 @@ class RobinhoodExitPricingTests(unittest.TestCase):
             option_id=None,
         )
 
-    def test_builds_limit_submission_from_executable_bid(
+    def test_builds_market_submission_for_equity(
         self,
     ) -> None:
         request = self.make_equity_request()
@@ -56,18 +57,22 @@ class RobinhoodExitPricingTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            submission.limit_price,
-            Decimal("107.80"),
+            submission.order_type,
+            RobinhoodOrderType.MARKET,
         )
 
-        self.assertEqual(
-            submission.order_type,
-            RobinhoodOrderType.LIMIT,
+        self.assertIsNone(
+            submission.limit_price,
         )
 
         self.assertEqual(
             submission.time_in_force,
             RobinhoodTimeInForce.GFD,
+        )
+
+        self.assertEqual(
+            submission.market_hours,
+            RobinhoodMarketHours.REGULAR_HOURS,
         )
 
     def test_rejects_quote_symbol_mismatch(
@@ -171,6 +176,53 @@ class RobinhoodExitPricingTests(unittest.TestCase):
                     40,
                 ),
             )
+
+    def test_builds_option_limit_submission_from_executable_bid(
+        self,
+    ) -> None:
+        request = RobinhoodExitOrderRequest(
+            position_id="account-0000:option:AAPL:order-456",
+            account_number="account-0000",
+            asset_type=AssetType.OPTION,
+            symbol="AAPL",
+            quantity=Decimal("1"),
+            action=RobinhoodExitAction.OPTION_SELL_TO_CLOSE,
+            option_id="option-contract-123",
+        )
+
+        quote = RobinhoodExitPriceQuote(
+            symbol="AAPL",
+            executable_bid=Decimal("2.40"),
+            observed_at=datetime.now(
+                timezone.utc
+            ),
+            option_id="option-contract-123",
+        )
+
+        submission = build_robinhood_exit_submission(
+            request,
+            quote,
+        )
+
+        self.assertEqual(
+            submission.order_type,
+            RobinhoodOrderType.LIMIT,
+        )
+
+        self.assertEqual(
+            submission.limit_price,
+            Decimal("2.40"),
+        )
+
+        self.assertEqual(
+            submission.time_in_force,
+            RobinhoodTimeInForce.GFD,
+        )
+
+        self.assertEqual(
+            submission.market_hours,
+            RobinhoodMarketHours.REGULAR_HOURS,
+        )
 
 
 if __name__ == "__main__":

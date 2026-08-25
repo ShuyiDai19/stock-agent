@@ -9,7 +9,10 @@ from stock_agent.brokers.robinhood import (
     RobinhoodExitOrderRequest,
     RobinhoodExitPriceQuote,
     RobinhoodExitSubmission,
+    RobinhoodMarketHours,
     RobinhoodOrderReceipt,
+    RobinhoodOrderType,
+    RobinhoodTimeInForce,
 )
 from stock_agent.domain import AssetType
 from stock_agent.execution import (
@@ -84,7 +87,7 @@ class FailingRobinhoodExitPriceProvider:
         raise self.error
 
 
-class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
+class RobinhoodExitExecutorTests(unittest.TestCase):
     def test_previews_equity_sell_without_submitting_order(
         self,
     ) -> None:
@@ -339,9 +342,7 @@ class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
             price_provider,
         )
 
-        result = executor.execute(
-            intent
-        )
+        result = executor.execute(intent)
 
         self.assertEqual(
             price_provider.get_exit_price_call_count,
@@ -389,8 +390,22 @@ class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
         )
 
         self.assertEqual(
+            submission.order_type,
+            RobinhoodOrderType.MARKET,
+        )
+
+        self.assertEqual(
+            submission.time_in_force,
+            RobinhoodTimeInForce.GFD,
+        )
+
+        self.assertEqual(
+            submission.market_hours,
+            RobinhoodMarketHours.REGULAR_HOURS,
+        )
+
+        self.assertIsNone(
             submission.limit_price,
-            Decimal("107.55"),
         )
 
         self.assertEqual(
@@ -449,9 +464,7 @@ class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
             RuntimeError,
             "Robinhood submission failed",
         ):
-            executor.execute(
-                intent
-            )
+            executor.execute(intent)
 
         self.assertEqual(
             price_provider.get_exit_price_call_count,
@@ -508,9 +521,7 @@ class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
             price_provider,
         )
 
-        result = executor.execute(
-            intent
-        )
+        result = executor.execute(intent)
 
         self.assertEqual(
             price_provider.get_exit_price_call_count,
@@ -539,8 +550,23 @@ class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
         )
 
         self.assertEqual(
+            submission.order_type,
+            RobinhoodOrderType.LIMIT,
+        )
+
+        self.assertEqual(
             submission.limit_price,
             Decimal("2.40"),
+        )
+
+        self.assertEqual(
+            submission.time_in_force,
+            RobinhoodTimeInForce.GFD,
+        )
+
+        self.assertEqual(
+            submission.market_hours,
+            RobinhoodMarketHours.REGULAR_HOURS,
         )
 
         self.assertEqual(
@@ -581,9 +607,7 @@ class DryRunRobinhoodExitExecutorTests(unittest.TestCase):
             RuntimeError,
             "exit quote unavailable",
         ):
-            executor.execute(
-                intent
-            )
+            executor.execute(intent)
 
         self.assertEqual(
             price_provider.get_exit_price_call_count,

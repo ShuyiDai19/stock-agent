@@ -9,6 +9,7 @@ from stock_agent.brokers.robinhood import (
     RobinhoodExitOrderRequest,
     RobinhoodExitSubmission,
     RobinhoodOrderReceipt,
+    RobinhoodOrderType,
 )
 from stock_agent.domain import AssetType
 
@@ -63,7 +64,7 @@ class GuardedRobinhoodBrokerClientTests(unittest.TestCase):
     ) -> RobinhoodExitSubmission:
         return RobinhoodExitSubmission(
             request=self.make_request(),
-            limit_price=Decimal("107.55"),
+            order_type=RobinhoodOrderType.MARKET,
         )
 
     def test_blocks_submission_when_live_execution_disabled(
