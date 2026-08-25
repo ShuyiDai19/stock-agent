@@ -64,6 +64,8 @@ class RobinhoodExitPriceProvider(Protocol):
 def build_robinhood_exit_submission(
     request: RobinhoodExitOrderRequest,
     quote: RobinhoodExitPriceQuote,
+    *,
+    ref_id: str,
 ) -> RobinhoodExitSubmission:
     if quote.symbol != request.symbol:
         raise ValueError(
@@ -78,6 +80,7 @@ def build_robinhood_exit_submission(
     if request.asset_type is AssetType.EQUITY:
         return RobinhoodExitSubmission(
             request=request,
+            ref_id=ref_id,
             order_type=RobinhoodOrderType.MARKET,
             limit_price=None,
         )
@@ -85,6 +88,7 @@ def build_robinhood_exit_submission(
     if request.asset_type is AssetType.OPTION:
         return RobinhoodExitSubmission(
             request=request,
+            ref_id=ref_id,
             order_type=RobinhoodOrderType.LIMIT,
             limit_price=quote.executable_bid,
         )

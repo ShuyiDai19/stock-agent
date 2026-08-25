@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from uuid import uuid4
 from datetime import datetime, timezone
 
 from stock_agent.brokers.robinhood.orders import (
@@ -53,9 +54,15 @@ class LiveRobinhoodExitExecutor:
         self,
         client: RobinhoodBrokerClient,
         price_provider: RobinhoodExitPriceProvider,
+        *,
+        ref_id_factory: Callable[[], str] | None = None,
     ) -> None:
         self._client = client
         self._price_provider = price_provider
+        self._ref_id_factory = (
+            ref_id_factory
+            or (lambda: str(uuid4()))
+        )
 
     def execute(
         self,
@@ -69,9 +76,12 @@ class LiveRobinhoodExitExecutor:
             request
         )
 
+        ref_id = self._ref_id_factory()
+
         submission = build_robinhood_exit_submission(
             request,
             quote,
+            ref_id=ref_id,
         )
 
         receipt = self._client.submit_exit_order(

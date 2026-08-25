@@ -88,6 +88,14 @@ class FailingRobinhoodExitPriceProvider:
 
 
 class RobinhoodExitExecutorTests(unittest.TestCase):
+    EQUITY_REF_ID = (
+        "123e4567-e89b-12d3-a456-426614174000"
+    )
+
+    OPTION_REF_ID = (
+        "123e4567-e89b-12d3-a456-426614174001"
+    )
+
     def test_previews_equity_sell_without_submitting_order(
         self,
     ) -> None:
@@ -340,6 +348,7 @@ class RobinhoodExitExecutorTests(unittest.TestCase):
         executor = LiveRobinhoodExitExecutor(
             client,
             price_provider,
+            ref_id_factory=lambda: self.EQUITY_REF_ID,
         )
 
         result = executor.execute(intent)
@@ -368,6 +377,11 @@ class RobinhoodExitExecutorTests(unittest.TestCase):
         )
 
         submission = client.received_submission
+
+        self.assertEqual(
+            submission.ref_id,
+            self.EQUITY_REF_ID,
+        )
 
         self.assertEqual(
             submission.request.position_id,
@@ -458,6 +472,7 @@ class RobinhoodExitExecutorTests(unittest.TestCase):
         executor = LiveRobinhoodExitExecutor(
             client,
             price_provider,
+            ref_id_factory=lambda: self.EQUITY_REF_ID,
         )
 
         with self.assertRaisesRegex(
@@ -478,6 +493,11 @@ class RobinhoodExitExecutorTests(unittest.TestCase):
 
         self.assertIsNotNone(
             client.received_submission,
+        )
+
+        self.assertEqual(
+            client.received_submission.ref_id,
+            self.EQUITY_REF_ID,
         )
 
     def test_live_executor_submits_option_sell_to_close(
@@ -519,6 +539,7 @@ class RobinhoodExitExecutorTests(unittest.TestCase):
         executor = LiveRobinhoodExitExecutor(
             client,
             price_provider,
+            ref_id_factory=lambda: self.OPTION_REF_ID,
         )
 
         result = executor.execute(intent)
@@ -538,6 +559,11 @@ class RobinhoodExitExecutorTests(unittest.TestCase):
         )
 
         submission = client.received_submission
+
+        self.assertEqual(
+            submission.ref_id,
+            self.OPTION_REF_ID,
+        )
 
         self.assertEqual(
             submission.request.action,
@@ -601,6 +627,7 @@ class RobinhoodExitExecutorTests(unittest.TestCase):
         executor = LiveRobinhoodExitExecutor(
             client,
             price_provider,
+            ref_id_factory=lambda: self.EQUITY_REF_ID,
         )
 
         with self.assertRaisesRegex(

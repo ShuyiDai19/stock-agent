@@ -6,15 +6,17 @@ from stock_agent.brokers.robinhood import (
     RobinhoodExitAction,
     RobinhoodExitOrderRequest,
     RobinhoodExitPriceQuote,
+    RobinhoodMarketHours,
     RobinhoodOrderType,
     RobinhoodTimeInForce,
     build_robinhood_exit_submission,
-    RobinhoodMarketHours,
 )
 from stock_agent.domain import AssetType
 
 
 class RobinhoodExitPricingTests(unittest.TestCase):
+    REF_ID = "123e4567-e89b-12d3-a456-426614174000"
+
     def make_equity_request(
         self,
     ) -> RobinhoodExitOrderRequest:
@@ -49,11 +51,17 @@ class RobinhoodExitPricingTests(unittest.TestCase):
         submission = build_robinhood_exit_submission(
             request,
             quote,
+            ref_id=self.REF_ID,
         )
 
         self.assertEqual(
             submission.request,
             request,
+        )
+
+        self.assertEqual(
+            submission.ref_id,
+            self.REF_ID,
         )
 
         self.assertEqual(
@@ -95,6 +103,7 @@ class RobinhoodExitPricingTests(unittest.TestCase):
             build_robinhood_exit_submission(
                 request,
                 quote,
+                ref_id=self.REF_ID,
             )
 
     def test_requires_matching_option_contract(
@@ -126,6 +135,7 @@ class RobinhoodExitPricingTests(unittest.TestCase):
             build_robinhood_exit_submission(
                 request,
                 quote,
+                ref_id=self.REF_ID,
             )
 
     def test_rejects_non_positive_executable_bid(
@@ -202,6 +212,12 @@ class RobinhoodExitPricingTests(unittest.TestCase):
         submission = build_robinhood_exit_submission(
             request,
             quote,
+            ref_id=self.REF_ID,
+        )
+
+        self.assertEqual(
+            submission.ref_id,
+            self.REF_ID,
         )
 
         self.assertEqual(

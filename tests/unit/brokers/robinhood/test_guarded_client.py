@@ -46,6 +46,8 @@ class FakeRobinhoodClient:
 
 
 class GuardedRobinhoodBrokerClientTests(unittest.TestCase):
+    REF_ID = "123e4567-e89b-12d3-a456-426614174000"
+
     def make_request(
         self,
     ) -> RobinhoodExitOrderRequest:
@@ -64,6 +66,7 @@ class GuardedRobinhoodBrokerClientTests(unittest.TestCase):
     ) -> RobinhoodExitSubmission:
         return RobinhoodExitSubmission(
             request=self.make_request(),
+            ref_id=self.REF_ID,
             order_type=RobinhoodOrderType.MARKET,
         )
 
@@ -132,6 +135,11 @@ class GuardedRobinhoodBrokerClientTests(unittest.TestCase):
         self.assertEqual(
             delegate.received_submission,
             submission,
+        )
+
+        self.assertEqual(
+            delegate.received_submission.ref_id,
+            self.REF_ID,
         )
 
         self.assertEqual(

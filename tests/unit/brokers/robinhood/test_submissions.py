@@ -13,6 +13,8 @@ from stock_agent.domain import AssetType
 
 
 class RobinhoodExitSubmissionTests(unittest.TestCase):
+    REF_ID = "123e4567-e89b-12d3-a456-426614174000"
+
     def make_equity_request(
         self,
     ) -> RobinhoodExitOrderRequest:
@@ -46,6 +48,7 @@ class RobinhoodExitSubmissionTests(unittest.TestCase):
 
         submission = RobinhoodExitSubmission(
             request=request,
+            ref_id=self.REF_ID,
             order_type=RobinhoodOrderType.LIMIT,
             limit_price=Decimal("2.40"),
         )
@@ -53,6 +56,11 @@ class RobinhoodExitSubmissionTests(unittest.TestCase):
         self.assertEqual(
             submission.request,
             request,
+        )
+
+        self.assertEqual(
+            submission.ref_id,
+            self.REF_ID,
         )
 
         self.assertEqual(
@@ -82,12 +90,18 @@ class RobinhoodExitSubmissionTests(unittest.TestCase):
 
         submission = RobinhoodExitSubmission(
             request=request,
+            ref_id=self.REF_ID,
             order_type=RobinhoodOrderType.MARKET,
         )
 
         self.assertEqual(
             submission.request,
             request,
+        )
+
+        self.assertEqual(
+            submission.ref_id,
+            self.REF_ID,
         )
 
         self.assertEqual(
@@ -109,6 +123,19 @@ class RobinhoodExitSubmissionTests(unittest.TestCase):
             submission.limit_price,
         )
 
+    def test_rejects_invalid_ref_id(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "ref_id must be a valid UUID",
+        ):
+            RobinhoodExitSubmission(
+                request=self.make_equity_request(),
+                ref_id="not-a-uuid",
+                order_type=RobinhoodOrderType.MARKET,
+            )
+
     def test_limit_order_requires_limit_price(
         self,
     ) -> None:
@@ -118,6 +145,7 @@ class RobinhoodExitSubmissionTests(unittest.TestCase):
         ):
             RobinhoodExitSubmission(
                 request=self.make_option_request(),
+                ref_id=self.REF_ID,
                 order_type=RobinhoodOrderType.LIMIT,
             )
 
@@ -130,6 +158,7 @@ class RobinhoodExitSubmissionTests(unittest.TestCase):
         ):
             RobinhoodExitSubmission(
                 request=self.make_equity_request(),
+                ref_id=self.REF_ID,
                 order_type=RobinhoodOrderType.MARKET,
                 limit_price=Decimal("107.80"),
             )
@@ -143,6 +172,7 @@ class RobinhoodExitSubmissionTests(unittest.TestCase):
         ):
             RobinhoodExitSubmission(
                 request=self.make_option_request(),
+                ref_id=self.REF_ID,
                 order_type=RobinhoodOrderType.LIMIT,
                 limit_price=Decimal("0"),
             )
@@ -156,6 +186,7 @@ class RobinhoodExitSubmissionTests(unittest.TestCase):
         ):
             RobinhoodExitSubmission(
                 request=self.make_option_request(),
+                ref_id=self.REF_ID,
                 order_type=RobinhoodOrderType.LIMIT,
                 limit_price=Decimal("-1"),
             )
@@ -169,6 +200,7 @@ class RobinhoodExitSubmissionTests(unittest.TestCase):
         ):
             RobinhoodExitSubmission(
                 request=self.make_option_request(),
+                ref_id=self.REF_ID,
                 order_type=RobinhoodOrderType.LIMIT,
                 limit_price=Decimal("NaN"),
             )

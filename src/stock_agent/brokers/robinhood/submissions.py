@@ -6,6 +6,8 @@ from stock_agent.brokers.robinhood.orders import (
     RobinhoodExitOrderRequest,
 )
 
+from uuid import UUID
+
 
 class RobinhoodOrderType(str, Enum):
     MARKET = "market"
@@ -23,6 +25,7 @@ class RobinhoodMarketHours(str, Enum):
 @dataclass(frozen=True)
 class RobinhoodExitSubmission:
     request: RobinhoodExitOrderRequest
+    ref_id: str
     order_type: RobinhoodOrderType
     time_in_force: RobinhoodTimeInForce = RobinhoodTimeInForce.GFD
     market_hours: RobinhoodMarketHours = (
@@ -31,6 +34,13 @@ class RobinhoodExitSubmission:
     limit_price: Decimal | None = None
 
     def __post_init__(self) -> None:
+        try:
+            UUID(self.ref_id)
+        except (ValueError, AttributeError, TypeError):
+            raise ValueError(
+                "ref_id must be a valid UUID"
+            ) from None
+            
         if self.order_type is RobinhoodOrderType.LIMIT:
             if self.limit_price is None:
                 raise ValueError(
