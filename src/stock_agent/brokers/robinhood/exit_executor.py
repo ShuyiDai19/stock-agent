@@ -18,6 +18,10 @@ from stock_agent.brokers.robinhood.pricing import (
     RobinhoodExitPriceProvider,
     build_robinhood_exit_submission,
 )
+from stock_agent.brokers.robinhood.errors import (
+    RobinhoodOrderReviewMismatchError,
+    RobinhoodOrderReviewRejectedError,
+)
 
 
 class DryRunRobinhoodExitExecutor:
@@ -83,6 +87,20 @@ class LiveRobinhoodExitExecutor:
             quote,
             ref_id=ref_id,
         )
+
+        review = self._client.review_exit_order(
+            submission
+        )
+
+        if review.submission != submission:
+            raise RobinhoodOrderReviewMismatchError(
+                "reviewed submission does not match requested submission"
+            )
+
+        if not review.approved:
+            raise RobinhoodOrderReviewRejectedError(
+                "Robinhood exit order review was not approved"
+            )
 
         receipt = self._client.submit_exit_order(
             submission

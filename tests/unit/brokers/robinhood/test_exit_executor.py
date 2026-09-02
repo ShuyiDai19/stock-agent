@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
+from dataclasses import replace
 
 from stock_agent.brokers.robinhood import (
     DryRunRobinhoodExitExecutor,
@@ -13,6 +14,10 @@ from stock_agent.brokers.robinhood import (
     RobinhoodOrderReceipt,
     RobinhoodOrderType,
     RobinhoodTimeInForce,
+    RobinhoodOrderReview,
+    RobinhoodOrderReviewRejectedError,
+    build_robinhood_exit_submission,
+    RobinhoodOrderReviewMismatchError,
 )
 from stock_agent.domain import AssetType
 from stock_agent.execution import (
@@ -28,12 +33,37 @@ class FakeRobinhoodClient:
         *,
         receipt: RobinhoodOrderReceipt | None = None,
         error: Exception | None = None,
+        review: RobinhoodOrderReview | None = None,
+        review_error: Exception | None = None,
     ) -> None:
         self.receipt = receipt
         self.error = error
+        self.review = review
+        self.review_error = review_error
 
+        self.review_call_count = 0
         self.submit_call_count = 0
+
+        self.received_review_submission = None
         self.received_submission = None
+
+    def review_exit_order(
+        self,
+        submission: RobinhoodExitSubmission,
+    ) -> RobinhoodOrderReview:
+        self.review_call_count += 1
+        self.received_review_submission = submission
+
+        if self.review_error is not None:
+            raise self.review_error
+
+        if self.review is not None:
+            return self.review
+
+        return RobinhoodOrderReview(
+            submission=submission,
+            approved=True,
+        )
 
     def submit_exit_order(
         self,
@@ -437,6 +467,21 @@ class RobinhoodExitExecutorTests(unittest.TestCase):
             submitted_at,
         )
 
+        self.assertEqual(
+            client.review_call_count,
+            1,
+        )
+
+        self.assertEqual(
+            client.submit_call_count,
+            1,
+        )
+
+        self.assertEqual(
+            client.received_review_submission,
+            client.received_submission,
+        )
+
     def test_live_executor_propagates_client_error(
         self,
     ) -> None:
@@ -638,6 +683,228 @@ class RobinhoodExitExecutorTests(unittest.TestCase):
 
         self.assertEqual(
             price_provider.get_exit_price_call_count,
+            1,
+        )
+
+        self.assertEqual(
+            client.submit_call_count,
+            0,
+        )
+
+        self.assertIsNone(
+            client.received_submission,
+        )
+
+    def test_live_executor_does_not_submit_when_review_rejected(
+        self,
+    ) -> None:
+        intent = ExitIntent(
+            position_id="account-0000:equity:AAPL:order-123",
+            account_number="account-0000",
+            asset_type=AssetType.EQUITY,
+            symbol="AAPL",
+            quantity=Decimal("0.031"),
+            reason=ExitReason.TRAILING_STOP,
+            triggered_at=datetime.now(
+                timezone.utc
+            ),
+            option_id=None,
+        )
+
+        price_provider = FakeRobinhoodExitPriceProvider(
+            RobinhoodExitPriceQuote(
+                symbol="AAPL",
+                executable_bid=Decimal("107.55"),
+                observed_at=datetime.now(
+                    timezone.utc
+                ),
+            )
+        )
+
+        client = FakeRobinhoodClient()
+
+        executor = LiveRobinhoodExitExecutor(
+            client,
+            price_provider,
+            ref_id_factory=lambda: self.EQUITY_REF_ID,
+        )
+
+        # We need the exact submission that the executor will review.
+        request = RobinhoodExitOrderRequest(
+            position_id=intent.position_id,
+            account_number=intent.account_number,
+            asset_type=intent.asset_type,
+            symbol=intent.symbol,
+            quantity=intent.quantity,
+            action=RobinhoodExitAction.EQUITY_SELL,
+            option_id=None,
+        )
+
+        quote = price_provider.quote
+
+        rejected_submission = build_robinhood_exit_submission(
+            request,
+            quote,
+            ref_id=self.EQUITY_REF_ID,
+        )
+
+        client.review = RobinhoodOrderReview(
+            submission=rejected_submission,
+            approved=False,
+            alerts=(
+                "order not permitted",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            RobinhoodOrderReviewRejectedError,
+            "review was not approved",
+        ):
+            executor.execute(intent)
+
+        self.assertEqual(
+            client.review_call_count,
+            1,
+        )
+
+        self.assertEqual(
+            client.submit_call_count,
+            0,
+        )
+
+        self.assertIsNone(
+            client.received_submission,
+        )
+
+    def test_live_executor_does_not_submit_when_review_fails(
+        self,
+    ) -> None:
+        intent = ExitIntent(
+            position_id="account-0000:equity:AAPL:order-123",
+            account_number="account-0000",
+            asset_type=AssetType.EQUITY,
+            symbol="AAPL",
+            quantity=Decimal("0.031"),
+            reason=ExitReason.TRAILING_STOP,
+            triggered_at=datetime.now(
+                timezone.utc
+            ),
+            option_id=None,
+        )
+
+        client = FakeRobinhoodClient(
+            review_error=RuntimeError(
+                "Robinhood review failed"
+            ),
+        )
+
+        price_provider = FakeRobinhoodExitPriceProvider(
+            RobinhoodExitPriceQuote(
+                symbol="AAPL",
+                executable_bid=Decimal("107.55"),
+                observed_at=datetime.now(
+                    timezone.utc
+                ),
+            )
+        )
+
+        executor = LiveRobinhoodExitExecutor(
+            client,
+            price_provider,
+            ref_id_factory=lambda: self.EQUITY_REF_ID,
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Robinhood review failed",
+        ):
+            executor.execute(intent)
+
+        self.assertEqual(
+            client.review_call_count,
+            1,
+        )
+
+        self.assertEqual(
+            client.submit_call_count,
+            0,
+        )
+
+        self.assertIsNone(
+            client.received_submission,
+        )
+
+    def test_live_executor_does_not_submit_mismatched_review(
+        self,
+    ) -> None:
+        intent = ExitIntent(
+            position_id="account-0000:option:AAPL:order-456",
+            account_number="account-0000",
+            asset_type=AssetType.OPTION,
+            symbol="AAPL",
+            quantity=Decimal("1"),
+            reason=ExitReason.TRAILING_STOP,
+            triggered_at=datetime.now(
+                timezone.utc
+            ),
+            option_id="option-contract-123",
+        )
+
+        price_quote = RobinhoodExitPriceQuote(
+            symbol="AAPL",
+            executable_bid=Decimal("2.40"),
+            observed_at=datetime.now(
+                timezone.utc
+            ),
+            option_id="option-contract-123",
+        )
+
+        price_provider = FakeRobinhoodExitPriceProvider(
+            price_quote
+        )
+
+        request = RobinhoodExitOrderRequest(
+            position_id=intent.position_id,
+            account_number=intent.account_number,
+            asset_type=intent.asset_type,
+            symbol=intent.symbol,
+            quantity=intent.quantity,
+            action=RobinhoodExitAction.OPTION_SELL_TO_CLOSE,
+            option_id=intent.option_id,
+        )
+
+        original_submission = build_robinhood_exit_submission(
+            request,
+            price_quote,
+            ref_id=self.OPTION_REF_ID,
+        )
+
+        mismatched_submission = replace(
+            original_submission,
+            limit_price=Decimal("2.50"),
+        )
+
+        client = FakeRobinhoodClient(
+            review=RobinhoodOrderReview(
+                submission=mismatched_submission,
+                approved=True,
+            ),
+        )
+
+        executor = LiveRobinhoodExitExecutor(
+            client,
+            price_provider,
+            ref_id_factory=lambda: self.OPTION_REF_ID,
+        )
+
+        with self.assertRaisesRegex(
+            RobinhoodOrderReviewMismatchError,
+            "reviewed submission does not match",
+        ):
+            executor.execute(intent)
+
+        self.assertEqual(
+            client.review_call_count,
             1,
         )
 

@@ -8,6 +8,9 @@ from stock_agent.brokers.robinhood.errors import (
 from stock_agent.brokers.robinhood.submissions import (
     RobinhoodExitSubmission,
 )
+from stock_agent.brokers.robinhood.reviews import (
+    RobinhoodOrderReview,
+)
 
 
 class GuardedRobinhoodBrokerClient:
@@ -35,5 +38,13 @@ class GuardedRobinhoodBrokerClient:
             )
 
         return self._client.submit_exit_order(
+            submission
+        )
+
+    def review_exit_order(
+        self,
+        submission: RobinhoodExitSubmission,
+    ) -> RobinhoodOrderReview:
+        return self._client.review_exit_order(
             submission
         )

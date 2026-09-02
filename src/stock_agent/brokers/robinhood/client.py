@@ -6,6 +6,10 @@ from stock_agent.brokers.robinhood.submissions import (
     RobinhoodExitSubmission,
 )
 
+from stock_agent.brokers.robinhood.reviews import (
+    RobinhoodOrderReview,
+)
+
 
 @dataclass(frozen=True)
 class RobinhoodOrderReceipt:
@@ -28,6 +32,12 @@ class RobinhoodOrderReceipt:
 
 
 class RobinhoodBrokerClient(Protocol):
+    def review_exit_order(
+        self,
+        submission: RobinhoodExitSubmission,
+    ) -> RobinhoodOrderReview:
+        ...
+
     def submit_exit_order(
         self,
         submission: RobinhoodExitSubmission,
