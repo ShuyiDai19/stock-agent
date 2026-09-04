@@ -36,6 +36,15 @@ class RobinhoodPlacementReconcilerTests(
         "123e4567-e89b-12d3-a456-426614174000"
     )
 
+    PLACEMENT_ATTEMPTED_AT = datetime(
+        2026,
+        9,
+        2,
+        4,
+        40,
+        tzinfo=timezone.utc,
+    )
+
     def make_request(
         self,
     ) -> PlacementReconciliationRequest:
@@ -45,6 +54,9 @@ class RobinhoodPlacementReconcilerTests(
             asset_type=AssetType.EQUITY,
             symbol="AAPL",
             ref_id=self.REF_ID,
+            placement_attempted_at=(
+                self.PLACEMENT_ATTEMPTED_AT
+            ),
             option_id=None,
         )
 
@@ -101,6 +113,11 @@ class RobinhoodPlacementReconcilerTests(
         self.assertEqual(
             outcome.checked_at,
             checked_at,
+        )
+
+        self.assertEqual(
+            outcome.request.placement_attempted_at,
+            self.PLACEMENT_ATTEMPTED_AT,
         )
 
     def test_returns_not_found_outcome(

@@ -1,16 +1,16 @@
 import unittest
-from decimal import Decimal
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from stock_agent.brokers.robinhood import (
+    PlacementReconciliationOutcome,
     PlacementReconciliationRequest,
+    PlacementReconciliationStatus,
     RobinhoodExitAction,
     RobinhoodExitOrderRequest,
     RobinhoodExitSubmission,
     RobinhoodOrderType,
     build_placement_reconciliation_request,
-    PlacementReconciliationOutcome,
-    PlacementReconciliationStatus,
 )
 from stock_agent.domain import AssetType
 
@@ -20,6 +20,15 @@ class PlacementReconciliationRequestTests(
 ):
     REF_ID = (
         "123e4567-e89b-12d3-a456-426614174000"
+    )
+
+    PLACEMENT_ATTEMPTED_AT = datetime(
+        2026,
+        9,
+        2,
+        4,
+        50,
+        tzinfo=timezone.utc,
     )
 
     def test_builds_equity_reconciliation_request(
@@ -45,7 +54,10 @@ class PlacementReconciliationRequestTests(
 
         reconciliation = (
             build_placement_reconciliation_request(
-                submission
+                submission,
+                placement_attempted_at=(
+                    self.PLACEMENT_ATTEMPTED_AT
+                ),
             )
         )
 
@@ -72,6 +84,11 @@ class PlacementReconciliationRequestTests(
         self.assertEqual(
             reconciliation.ref_id,
             self.REF_ID,
+        )
+
+        self.assertEqual(
+            reconciliation.placement_attempted_at,
+            self.PLACEMENT_ATTEMPTED_AT,
         )
 
         self.assertIsNone(
@@ -104,7 +121,10 @@ class PlacementReconciliationRequestTests(
 
         reconciliation = (
             build_placement_reconciliation_request(
-                submission
+                submission,
+                placement_attempted_at=(
+                    self.PLACEMENT_ATTEMPTED_AT
+                ),
             )
         )
 
@@ -123,6 +143,11 @@ class PlacementReconciliationRequestTests(
             self.REF_ID,
         )
 
+        self.assertEqual(
+            reconciliation.placement_attempted_at,
+            self.PLACEMENT_ATTEMPTED_AT,
+        )
+
     def test_option_reconciliation_requires_option_id(
         self,
     ) -> None:
@@ -136,6 +161,9 @@ class PlacementReconciliationRequestTests(
                 asset_type=AssetType.OPTION,
                 symbol="AAPL",
                 ref_id=self.REF_ID,
+                placement_attempted_at=(
+                    self.PLACEMENT_ATTEMPTED_AT
+                ),
                 option_id=None,
             )
 
@@ -155,14 +183,53 @@ class PlacementReconciliationRequestTests(
                 asset_type=AssetType.EQUITY,
                 symbol="AAPL",
                 ref_id=self.REF_ID,
+                placement_attempted_at=(
+                    self.PLACEMENT_ATTEMPTED_AT
+                ),
                 option_id="option-contract-123",
             )
+
+    def test_rejects_naive_placement_attempted_at(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            (
+                "placement_attempted_at must be "
+                "timezone-aware"
+            ),
+        ):
+            PlacementReconciliationRequest(
+                position_id="position-123",
+                account_number="account-0000",
+                asset_type=AssetType.EQUITY,
+                symbol="AAPL",
+                ref_id=self.REF_ID,
+                placement_attempted_at=datetime(
+                    2026,
+                    9,
+                    2,
+                    4,
+                    50,
+                ),
+                option_id=None,
+            )
+
 
 class PlacementReconciliationOutcomeTests(
     unittest.TestCase
 ):
     REF_ID = (
         "123e4567-e89b-12d3-a456-426614174000"
+    )
+
+    PLACEMENT_ATTEMPTED_AT = datetime(
+        2026,
+        9,
+        2,
+        4,
+        20,
+        tzinfo=timezone.utc,
     )
 
     def make_request(
@@ -174,6 +241,9 @@ class PlacementReconciliationOutcomeTests(
             asset_type=AssetType.EQUITY,
             symbol="AAPL",
             ref_id=self.REF_ID,
+            placement_attempted_at=(
+                self.PLACEMENT_ATTEMPTED_AT
+            ),
             option_id=None,
         )
 

@@ -148,7 +148,18 @@ class FailingReceiptDecoder:
 
 
 class MCPRobinhoodBrokerClientTests(unittest.TestCase):
-    REF_ID = "123e4567-e89b-12d3-a456-426614174000"
+    REF_ID = (
+        "123e4567-e89b-12d3-a456-426614174000"
+    )
+
+    PLACEMENT_ATTEMPTED_AT = datetime(
+        2026,
+        9,
+        3,
+        8,
+        0,
+        tzinfo=timezone.utc,
+    )
 
     def make_equity_submission(
         self,
@@ -980,6 +991,66 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             1,
         )
 
+    def test_does_not_place_when_placement_clock_is_naive(
+        self,
+    ) -> None:
+        submission = self.make_equity_submission()
+
+        invoker = SequencedFakeMCPToolInvoker(
+            results=[
+                {
+                    "data": {
+                        "order_checks": {},
+                    }
+                },
+            ]
+        )
+
+        client = MCPRobinhoodBrokerClient(
+            invoker,
+            receipt_decoder=RobinhoodMCPReceiptDecoder(
+                clock=lambda: datetime.now(
+                    timezone.utc
+                ),
+            ),
+            placement_clock=lambda: datetime(
+                2026,
+                9,
+                3,
+                8,
+                0,
+            ),
+        )
+
+        review = client.review_exit_order(
+            submission
+        )
+
+        self.assertTrue(
+            review.approved,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            (
+                "placement clock must return "
+                "timezone-aware datetime"
+            ),
+        ):
+            client.submit_exit_order(
+                submission
+            )
+
+        self.assertEqual(
+            len(invoker.calls),
+            1,
+        )
+
+        self.assertEqual(
+            invoker.calls[0][0],
+            "review_equity_order",
+        )
+
     def test_marks_transport_failure_as_uncertain(
         self,
     ) -> None:
@@ -1004,6 +1075,9 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
                 clock=lambda: datetime.now(
                     timezone.utc
                 ),
+            ),
+            placement_clock=lambda: (
+                self.PLACEMENT_ATTEMPTED_AT
             ),
         )
 
@@ -1049,6 +1123,11 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
         self.assertEqual(
             request.ref_id,
             submission.ref_id,
+        )
+
+        self.assertEqual(
+            request.placement_attempted_at,
+            self.PLACEMENT_ATTEMPTED_AT,
         )
 
         self.assertIsNone(
@@ -1104,6 +1183,9 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
         client = MCPRobinhoodBrokerClient(
             invoker,
             receipt_decoder=decoder,
+            placement_clock=lambda: (
+                self.PLACEMENT_ATTEMPTED_AT
+            ),
         )
 
         review = client.review_exit_order(
@@ -1138,6 +1220,11 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
         self.assertEqual(
             request.ref_id,
             submission.ref_id,
+        )
+
+        self.assertEqual(
+            request.placement_attempted_at,
+            self.PLACEMENT_ATTEMPTED_AT,
         )
 
         self.assertEqual(
