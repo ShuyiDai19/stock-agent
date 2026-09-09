@@ -7,6 +7,7 @@ from stock_agent.brokers.robinhood.client import (
 )
 from stock_agent.brokers.robinhood.mcp import (
     MCPToolInvocationUncertainError,
+    MCPToolInvocationNotSentError,
     MCPToolInvoker,
 )
 from stock_agent.brokers.robinhood.mcp_mapping import (
@@ -29,6 +30,10 @@ from stock_agent.brokers.robinhood.errors import (
 from stock_agent.brokers.robinhood.reconciliation import (
     build_placement_reconciliation_request,
 )
+from stock_agent.brokers.robinhood.placement_journal import (
+    PlacementAttemptJournal,
+    PlacementAttemptRecord,
+)
 
 
 ReviewDecoder = Callable[
@@ -49,6 +54,8 @@ class MCPRobinhoodBrokerClient:
         review_decoder: ReviewDecoder | None = None,
         receipt_decoder: ReceiptDecoder | None = None,
         placement_clock: Callable[[], datetime] | None = None,
+        *,
+        placement_journal: PlacementAttemptJournal,
     ) -> None:
         self._invoker = invoker
 
@@ -58,6 +65,17 @@ class MCPRobinhoodBrokerClient:
         )
 
         self._receipt_decoder = receipt_decoder
+
+        self._placement_clock = (
+            placement_clock
+            if placement_clock is not None
+            else lambda: datetime.now(timezone.utc)
+        )
+
+        if placement_journal is None:
+            raise ValueError("placement_journal is required")
+
+        self._placement_journal = placement_journal
 
         self._approved_submissions: dict[
             str,
@@ -123,9 +141,7 @@ class MCPRobinhoodBrokerClient:
             submission
         )
 
-        placement_attempted_at = (
-            self._placement_clock()
-        )
+        placement_attempted_at = self._placement_clock()
 
         if (
             placement_attempted_at.tzinfo is None
@@ -142,16 +158,29 @@ class MCPRobinhoodBrokerClient:
             )
         )
 
+        record = PlacementAttemptRecord(
+            submission=submission,
+            placement_attempted_at=placement_attempted_at,
+        )
+
+        # Consume the in-memory approval before attempting persistence.
+        # A failed journal write must not leave a reusable approval.
         self._approved_submissions.pop(
             submission.ref_id
         )
+
+        # Must commit successfully before crossing the broker boundary.
+        # Keep this OUTSIDE the place exception handler.
+        self._placement_journal.insert(record)
 
         try:
             raw_result = self._invoker.call_tool(
                 call.tool_name,
                 call.arguments,
             )
-        except MCPToolInvocationUncertainError as exc:
+        except MCPToolInvocationNotSentError:
+            raise
+        except Exception as exc:
             raise RobinhoodPlacementUncertainError(
                 reconciliation_request
             ) from exc

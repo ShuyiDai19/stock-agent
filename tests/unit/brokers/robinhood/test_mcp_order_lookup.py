@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 from typing import Any
 
 from stock_agent.brokers.robinhood import (
@@ -32,7 +33,36 @@ class FakeMCPToolInvoker:
         return self.result
 
 
-class MCPRobinhoodOrderLookupTests(unittest.TestCase):
+class SequencedFakeMCPToolInvoker:
+    def __init__(
+        self,
+        results: list[Any],
+    ) -> None:
+        self.results = list(results)
+        self.calls: list[
+            tuple[str, dict[str, Any]]
+        ] = []
+
+    def call_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> Any:
+        self.calls.append(
+            (tool_name, dict(arguments))
+        )
+
+        if not self.results:
+            raise RuntimeError(
+                "fake MCP result sequence exhausted"
+            )
+
+        return self.results.pop(0)
+
+
+class MCPRobinhoodOrderLookupTests(
+    unittest.TestCase
+):
     REF_ID = (
         "123e4567-e89b-12d3-a456-426614174000"
     )
@@ -47,6 +77,14 @@ class MCPRobinhoodOrderLookupTests(unittest.TestCase):
             symbol="AAPL",
             ref_id=self.REF_ID,
             option_id=None,
+            placement_attempted_at=datetime(
+                2026,
+                9,
+                2,
+                4,
+                40,
+                tzinfo=timezone.utc,
+            ),
         )
 
     def test_builds_equity_lookup_call(
@@ -83,7 +121,8 @@ class MCPRobinhoodOrderLookupTests(unittest.TestCase):
                             "symbol": "AAPL",
                             "ref_id": self.REF_ID,
                         }
-                    ]
+                    ],
+                    "next": None,
                 }
             },
         )
@@ -106,6 +145,7 @@ class MCPRobinhoodOrderLookupTests(unittest.TestCase):
             {
                 "data": {
                     "orders": [],
+                    "next": None,
                 }
             },
         )
@@ -130,7 +170,8 @@ class MCPRobinhoodOrderLookupTests(unittest.TestCase):
                             "type": "market",
                             "quantity": "0.031",
                         }
-                    ]
+                    ],
+                    "next": None,
                 }
             },
         )
@@ -158,6 +199,7 @@ class MCPRobinhoodOrderLookupTests(unittest.TestCase):
             {
                 "data": {
                     "orders": [],
+                    "next": None,
                 }
             }
         )
@@ -194,6 +236,14 @@ class MCPRobinhoodOrderLookupTests(unittest.TestCase):
             asset_type=AssetType.OPTION,
             symbol="AAPL",
             ref_id=self.REF_ID,
+            placement_attempted_at=datetime(
+                2026,
+                9,
+                2,
+                4,
+                40,
+                tzinfo=timezone.utc,
+            ),
             option_id="option-contract-123",
         )
 
@@ -213,3 +263,319 @@ class MCPRobinhoodOrderLookupTests(unittest.TestCase):
                 "placed_agent": "agentic",
             },
         )
+
+    def test_empty_page_with_next_is_unknown(
+        self,
+    ) -> None:
+        result = decode_robinhood_mcp_order_lookup(
+            self.make_equity_request(),
+            {
+                "data": {
+                    "orders": [],
+                    "next": (
+                        "https://example.invalid/orders"
+                        "?cursor=page-2"
+                    ),
+                }
+            },
+        )
+
+        self.assertEqual(
+            result.status,
+            RobinhoodOrderLookupStatus.UNKNOWN,
+        )
+
+        self.assertIsNone(
+            result.broker_order_id,
+        )
+
+    def test_nonmatching_page_with_next_is_unknown(
+        self,
+    ) -> None:
+        result = decode_robinhood_mcp_order_lookup(
+            self.make_equity_request(),
+            {
+                "data": {
+                    "orders": [
+                        {
+                            "id": "other-order",
+                            "ref_id": (
+                                "123e4567-e89b-12d3-a456-426614174999"
+                            ),
+                        }
+                    ],
+                    "next": (
+                        "https://example.invalid/orders"
+                        "?cursor=page-2"
+                    ),
+                }
+            },
+        )
+
+        self.assertEqual(
+            result.status,
+            RobinhoodOrderLookupStatus.UNKNOWN,
+        )
+
+    def test_top_level_next_is_also_respected(
+        self,
+    ) -> None:
+        result = decode_robinhood_mcp_order_lookup(
+            self.make_equity_request(),
+            {
+                "data": {
+                    "orders": [],
+                },
+                "next": (
+                    "https://example.invalid/orders"
+                    "?cursor=page-2"
+                ),
+            },
+        )
+
+        self.assertEqual(
+            result.status,
+            RobinhoodOrderLookupStatus.UNKNOWN,
+        )
+
+    def test_exact_match_can_be_found_before_last_page(
+        self,
+    ) -> None:
+        result = decode_robinhood_mcp_order_lookup(
+            self.make_equity_request(),
+            {
+                "data": {
+                    "orders": [
+                        {
+                            "id": "broker-order-123",
+                            "ref_id": self.REF_ID,
+                        }
+                    ],
+                    "next": (
+                        "https://example.invalid/orders"
+                        "?cursor=page-2"
+                    ),
+                }
+            },
+        )
+
+        self.assertEqual(
+            result.status,
+            RobinhoodOrderLookupStatus.FOUND,
+        )
+
+        self.assertEqual(
+            result.broker_order_id,
+            "broker-order-123",
+        )
+
+    def test_reads_two_pages_before_returning_not_found(
+        self,
+    ) -> None:
+        invoker = SequencedFakeMCPToolInvoker(
+            [
+                {
+                    "data": {
+                        "orders": [],
+                        "next": (
+                            "https://example.invalid/orders"
+                            "?cursor=page-2"
+                        ),
+                    }
+                },
+                {
+                    "data": {
+                        "orders": [],
+                        "next": None,
+                    }
+                },
+            ]
+        )
+
+        lookup = MCPRobinhoodOrderLookup(
+            invoker
+        )
+
+        result = lookup.lookup(
+            self.make_equity_request()
+        )
+
+        self.assertEqual(
+            result.status,
+            RobinhoodOrderLookupStatus.NOT_FOUND,
+        )
+
+        self.assertEqual(
+            len(invoker.calls),
+            2,
+        )
+
+        self.assertEqual(
+            invoker.calls[1][1]["cursor"],
+            "page-2",
+        )
+
+    def test_does_not_forget_unverified_candidates_on_earlier_page(
+        self,
+    ) -> None:
+        invoker = SequencedFakeMCPToolInvoker(
+            [
+                {
+                    "data": {
+                        "orders": [
+                            {
+                                "id": "other-order",
+                            }
+                        ],
+                        "next": (
+                            "https://example.invalid/orders"
+                            "?cursor=page-2"
+                        ),
+                    }
+                },
+                {
+                    "data": {
+                        "orders": [],
+                        "next": None,
+                    }
+                },
+            ]
+        )
+
+        result = MCPRobinhoodOrderLookup(
+            invoker
+        ).lookup(
+            self.make_equity_request()
+        )
+
+        self.assertEqual(
+            result.status,
+            RobinhoodOrderLookupStatus.UNKNOWN,
+        )
+
+    def test_repeated_cursor_stops_pagination(
+        self,
+    ) -> None:
+        next_url = (
+            "https://example.invalid/orders"
+            "?cursor=page-2"
+        )
+
+        invoker = SequencedFakeMCPToolInvoker(
+            [
+                {
+                    "data": {
+                        "orders": [],
+                        "next": next_url,
+                    }
+                },
+                {
+                    "data": {
+                        "orders": [],
+                        "next": next_url,
+                    }
+                },
+            ]
+        )
+
+        result = MCPRobinhoodOrderLookup(
+            invoker
+        ).lookup(
+            self.make_equity_request()
+        )
+
+        self.assertEqual(
+            result.status,
+            RobinhoodOrderLookupStatus.UNKNOWN,
+        )
+
+        self.assertEqual(
+            len(invoker.calls),
+            2,
+        )
+
+        self.assertIn(
+            "cursor repeated",
+            result.message,
+        )
+
+    def test_max_pages_stops_without_claiming_not_found(
+        self,
+    ) -> None:
+        invoker = SequencedFakeMCPToolInvoker(
+            [
+                {
+                    "data": {
+                        "orders": [],
+                        "next": (
+                            "https://example.invalid/orders"
+                            "?cursor=page-2"
+                        ),
+                    }
+                },
+                {
+                    "data": {
+                        "orders": [],
+                        "next": (
+                            "https://example.invalid/orders"
+                            "?cursor=page-3"
+                        ),
+                    }
+                },
+            ]
+        )
+
+        result = MCPRobinhoodOrderLookup(
+            invoker,
+            max_pages=2,
+        ).lookup(
+            self.make_equity_request()
+        )
+
+        self.assertEqual(
+            result.status,
+            RobinhoodOrderLookupStatus.UNKNOWN,
+        )
+
+        self.assertEqual(
+            len(invoker.calls),
+            2,
+        )
+
+        self.assertIn(
+            "maximum page limit",
+            result.message,
+        )
+
+    def test_missing_pagination_metadata_is_unknown(
+        self,
+    ) -> None:
+        invoker = SequencedFakeMCPToolInvoker(
+            [
+                {
+                    "data": {
+                        "orders": [],
+                    }
+                }
+            ]
+        )
+
+        result = MCPRobinhoodOrderLookup(
+            invoker
+        ).lookup(
+            self.make_equity_request()
+        )
+
+        self.assertEqual(
+            result.status,
+            RobinhoodOrderLookupStatus.UNKNOWN,
+        )
+
+        self.assertEqual(
+            len(invoker.calls),
+            1,
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

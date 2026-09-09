@@ -40,6 +40,14 @@ class PlacementReconciliationRequest:
             )
 
         if (
+            self.placement_attempted_at.tzinfo is None
+            or self.placement_attempted_at.utcoffset() is None
+        ):
+            raise ValueError(
+                "placement_attempted_at must be timezone-aware"
+            )
+
+        if (
             self.asset_type is AssetType.EQUITY
             and self.option_id is not None
         ):

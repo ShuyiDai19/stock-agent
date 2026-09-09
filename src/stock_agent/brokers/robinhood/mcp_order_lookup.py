@@ -14,6 +14,7 @@ from stock_agent.brokers.robinhood.reconciliation import (
     PlacementReconciliationRequest,
 )
 from stock_agent.domain import AssetType
+from urllib.parse import parse_qs, urlsplit
 
 
 def build_robinhood_mcp_order_lookup_call(
@@ -42,6 +43,55 @@ def build_robinhood_mcp_order_lookup_call(
         f"unsupported asset type: {request.asset_type}"
     )
 
+def _extract_next_cursor(
+    raw_result: dict[str, Any],
+) -> str | None:
+    data = raw_result["data"]
+
+    markers = [
+        envelope["next"]
+        for envelope in (raw_result, data)
+        if "next" in envelope
+    ]
+
+    if not markers:
+        raise ValueError(
+            "Robinhood order lookup pagination metadata is missing"
+        )
+
+    if any(marker != markers[0] for marker in markers[1:]):
+        raise ValueError(
+            "Robinhood order lookup pagination metadata conflicts"
+        )
+
+    next_value = markers[0]
+
+    if next_value is None:
+        return None
+
+    if not isinstance(next_value, str) or not next_value.strip():
+        raise ValueError(
+            "Robinhood order lookup next must be a nonempty URL"
+        )
+
+    parsed = urlsplit(next_value)
+
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError(
+            "Robinhood order lookup next must be an HTTPS URL"
+        )
+
+    cursors = parse_qs(
+        parsed.query,
+        keep_blank_values=True,
+    ).get("cursor", [])
+
+    if len(cursors) != 1 or not cursors[0]:
+        raise ValueError(
+            "Robinhood order lookup next must contain one cursor"
+        )
+
+    return cursors[0]
 
 def decode_robinhood_mcp_order_lookup(
     request: PlacementReconciliationRequest,
@@ -66,11 +116,6 @@ def decode_robinhood_mcp_order_lookup(
             "Robinhood order lookup result must contain orders"
         )
 
-    if not orders:
-        return RobinhoodOrderLookupResult(
-            status=RobinhoodOrderLookupStatus.NOT_FOUND,
-        )
-
     for order in orders:
         if not isinstance(order, dict):
             raise ValueError(
@@ -93,6 +138,22 @@ def decode_robinhood_mcp_order_lookup(
                 broker_order_id=broker_order_id,
             )
 
+    next_cursor = _extract_next_cursor(raw_result)
+
+    if next_cursor is not None:
+        return RobinhoodOrderLookupResult(
+            status=RobinhoodOrderLookupStatus.UNKNOWN,
+            message=(
+                "Robinhood order lookup has additional pages; "
+                "exact ref_id has not been found"
+            ),
+        )
+
+    if not orders:
+        return RobinhoodOrderLookupResult(
+            status=RobinhoodOrderLookupStatus.NOT_FOUND,
+        )
+
     return RobinhoodOrderLookupResult(
         status=RobinhoodOrderLookupStatus.UNKNOWN,
         message=(
@@ -106,8 +167,16 @@ class MCPRobinhoodOrderLookup:
     def __init__(
         self,
         invoker: MCPToolInvoker,
+        *,
+        max_pages: int = 10,
     ) -> None:
+        if type(max_pages) is not int or max_pages < 1:
+            raise ValueError(
+                "max_pages must be a positive integer"
+            )
+
         self._invoker = invoker
+        self._max_pages = max_pages
 
     def lookup(
         self,
@@ -117,12 +186,67 @@ class MCPRobinhoodOrderLookup:
             request
         )
 
-        raw_result = self._invoker.call_tool(
-            call.tool_name,
-            call.arguments,
-        )
+        arguments = dict(call.arguments)
+        seen_cursors: set[str] = set()
+        saw_unverified_candidates = False
 
-        return decode_robinhood_mcp_order_lookup(
-            request,
-            raw_result,
+        for _ in range(self._max_pages):
+            # Do not catch transport errors here.
+            raw_result = self._invoker.call_tool(
+                call.tool_name,
+                arguments,
+            )
+
+            try:
+                result = decode_robinhood_mcp_order_lookup(
+                    request,
+                    raw_result,
+                )
+
+                if result.status is RobinhoodOrderLookupStatus.FOUND:
+                    return result
+
+                next_cursor = _extract_next_cursor(
+                    raw_result
+                )
+
+                if raw_result["data"]["orders"]:
+                    saw_unverified_candidates = True
+
+            except (ValueError, TypeError) as exc:
+                return RobinhoodOrderLookupResult(
+                    status=RobinhoodOrderLookupStatus.UNKNOWN,
+                    message=f"order lookup response is inconclusive: {exc}",
+                )
+
+            if next_cursor is None:
+                if saw_unverified_candidates:
+                    return RobinhoodOrderLookupResult(
+                        status=RobinhoodOrderLookupStatus.UNKNOWN,
+                        message=(
+                            "complete order lookup contains "
+                            "unverified candidate orders"
+                        ),
+                    )
+
+                return RobinhoodOrderLookupResult(
+                    status=RobinhoodOrderLookupStatus.NOT_FOUND,
+                )
+
+            if next_cursor in seen_cursors:
+                return RobinhoodOrderLookupResult(
+                    status=RobinhoodOrderLookupStatus.UNKNOWN,
+                    message="order lookup pagination cursor repeated",
+                )
+
+            seen_cursors.add(next_cursor)
+
+            arguments = {
+                **call.arguments,
+                "cursor": next_cursor,
+            }
+
+        return RobinhoodOrderLookupResult(
+            status=RobinhoodOrderLookupStatus.UNKNOWN,
+            message="order lookup reached maximum page limit",
         )

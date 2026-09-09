@@ -3,6 +3,8 @@ from decimal import Decimal
 from typing import Any
 from datetime import datetime, timezone
 from dataclasses import replace
+import tempfile
+from pathlib import Path
 
 from stock_agent.brokers.robinhood import (
     MCPRobinhoodBrokerClient,
@@ -16,8 +18,31 @@ from stock_agent.brokers.robinhood import (
     RobinhoodOrderNotReviewedError,
     MCPToolInvocationUncertainError,
     RobinhoodPlacementUncertainError,
+    MCPToolInvocationNotSentError,
 )
 from stock_agent.domain import AssetType
+from stock_agent.brokers.robinhood.placement_journal import (
+    PlacementAttemptAlreadyExistsError,
+    PlacementAttemptRecord,
+    SQLitePlacementAttemptJournal,
+)
+
+class FakePlacementAttemptJournal:
+    def __init__(self) -> None:
+        self.records = {}
+        self.insert_count = 0
+
+    def insert(self, record: PlacementAttemptRecord) -> None:
+        self.insert_count += 1
+
+        ref_id = record.submission.ref_id
+
+        if ref_id in self.records:
+            raise PlacementAttemptAlreadyExistsError(
+                "placement attempt ref_id already exists"
+            )
+
+        self.records[ref_id] = record
 
 class FakeReceiptDecoder:
     def __init__(
@@ -161,6 +186,26 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
         tzinfo=timezone.utc,
     )
 
+    def make_client(
+        self,
+        invoker,
+        review_decoder=None,
+        receipt_decoder=None,
+        placement_clock=None,
+        *,
+        placement_journal=None,
+    ) -> MCPRobinhoodBrokerClient:
+        if placement_journal is None:
+            placement_journal = FakePlacementAttemptJournal()
+
+        return MCPRobinhoodBrokerClient(
+            invoker,
+            review_decoder=review_decoder,
+            receipt_decoder=receipt_decoder,
+            placement_clock=placement_clock,
+            placement_journal=placement_journal,
+        )
+
     def make_equity_submission(
         self,
     ) -> RobinhoodExitSubmission:
@@ -198,7 +243,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             approved=True,
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker,
             decoder,
         )
@@ -267,7 +312,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
 
         decoder = FakeReviewDecoder()
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker,
             decoder,
         )
@@ -317,7 +362,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             result=raw_result,
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker
         )
 
@@ -370,7 +415,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             },
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker
         )
 
@@ -434,7 +479,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             receipt
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker,
             receipt_decoder=decoder,
         )
@@ -521,7 +566,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             receipt,
         )
 
-    def test_propagates_mcp_place_error(
+    def test_marks_unclassified_place_error_as_uncertain(
         self,
     ) -> None:
         submission = self.make_equity_submission()
@@ -533,65 +578,65 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
                         "order_checks": {},
                     }
                 },
-                RuntimeError(
-                    "MCP place failed"
-                ),
+                RuntimeError("MCP place failed"),
             ]
         )
 
         receipt_decoder = RobinhoodMCPReceiptDecoder(
-            clock=lambda: datetime.now(
-                timezone.utc
-            ),
+            clock=lambda: datetime.now(timezone.utc),
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker,
             receipt_decoder=receipt_decoder,
         )
 
-        review = client.review_exit_order(
-            submission
-        )
+        review = client.review_exit_order(submission)
+        self.assertTrue(review.approved)
 
-        self.assertTrue(
-            review.approved,
-        )
+        with self.assertRaises(
+            RobinhoodPlacementUncertainError
+        ) as context:
+            client.submit_exit_order(submission)
 
-        with self.assertRaisesRegex(
+        error = context.exception
+
+        self.assertIsInstance(
+            error.__cause__,
             RuntimeError,
-            "MCP place failed",
-        ):
-            client.submit_exit_order(
-                submission
-            )
-
+        )
         self.assertEqual(
-            len(invoker.calls),
-            2,
+            str(error.__cause__),
+            "MCP place failed",
+        )
+        self.assertEqual(
+            error.ref_id,
+            submission.ref_id,
+        )
+        self.assertEqual(
+            error.position_id,
+            submission.request.position_id,
         )
 
+        self.assertEqual(len(invoker.calls), 2)
         self.assertEqual(
             invoker.calls[0][0],
             "review_equity_order",
         )
-
         self.assertEqual(
             invoker.calls[1][0],
             "place_equity_order",
         )
+
+        # Approval was consumed before the external place call.
+        # An uncertain outcome must not trigger a blind retry.
         with self.assertRaisesRegex(
             RobinhoodOrderNotReviewedError,
             "has not been approved by review",
         ):
-            client.submit_exit_order(
-                submission
-            )
+            client.submit_exit_order(submission)
 
-        self.assertEqual(
-            len(invoker.calls),
-            2,
-        )
+        self.assertEqual(len(invoker.calls), 2)
 
     def test_does_not_invoke_place_without_receipt_decoder(
         self,
@@ -600,7 +645,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
 
         invoker = FakeMCPToolInvoker()
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker
         )
 
@@ -662,7 +707,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             ]
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker,
             receipt_decoder=RobinhoodMCPReceiptDecoder(
                 clock=lambda: acknowledged_at,
@@ -767,7 +812,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             ]
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker,
             receipt_decoder=RobinhoodMCPReceiptDecoder(
                 clock=lambda: datetime.now(
@@ -852,7 +897,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             results=[]
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker,
             receipt_decoder=RobinhoodMCPReceiptDecoder(
                 clock=lambda: datetime.now(
@@ -895,7 +940,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             ]
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker,
             receipt_decoder=RobinhoodMCPReceiptDecoder(
                 clock=lambda: datetime.now(
@@ -945,7 +990,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             ]
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker,
             receipt_decoder=RobinhoodMCPReceiptDecoder(
                 clock=lambda: datetime.now(
@@ -1006,7 +1051,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             ]
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker,
             receipt_decoder=RobinhoodMCPReceiptDecoder(
                 clock=lambda: datetime.now(
@@ -1069,7 +1114,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             ]
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker,
             receipt_decoder=RobinhoodMCPReceiptDecoder(
                 clock=lambda: datetime.now(
@@ -1180,7 +1225,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             )
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker,
             receipt_decoder=decoder,
             placement_clock=lambda: (
@@ -1256,7 +1301,9 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
         self,
     ) -> None:
         request = RobinhoodExitOrderRequest(
-            position_id="account-0000:option:AAPL:order-456",
+            position_id=(
+                "account-0000:option:AAPL:order-456"
+            ),
             account_number="account-0000",
             asset_type=AssetType.OPTION,
             symbol="AAPL",
@@ -1287,12 +1334,15 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             ]
         )
 
-        client = MCPRobinhoodBrokerClient(
+        client = self.make_client(
             invoker,
             receipt_decoder=RobinhoodMCPReceiptDecoder(
                 clock=lambda: datetime.now(
                     timezone.utc
                 ),
+            ),
+            placement_clock=lambda: (
+                self.PLACEMENT_ATTEMPTED_AT
             ),
         )
 
@@ -1329,6 +1379,149 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             reconciliation.ref_id,
             self.REF_ID,
         )
+
+        self.assertEqual(
+            reconciliation.placement_attempted_at,
+            self.PLACEMENT_ATTEMPTED_AT,
+        )
+
+    def test_propagates_proven_not_sent_error(
+        self,
+    ) -> None:
+        submission = self.make_equity_submission()
+
+        invoker = SequencedFakeMCPToolInvoker(
+            results=[
+                {"data": {"order_checks": {}}},
+                MCPToolInvocationNotSentError(
+                    "request was not sent"
+                ),
+            ]
+        )
+
+        client = self.make_client(
+            invoker,
+            receipt_decoder=RobinhoodMCPReceiptDecoder(
+                clock=lambda: datetime.now(timezone.utc)
+            ),
+        )
+
+        review = client.review_exit_order(submission)
+        self.assertTrue(review.approved)
+
+        with self.assertRaisesRegex(
+            MCPToolInvocationNotSentError,
+            "request was not sent",
+        ):
+            client.submit_exit_order(submission)
+
+        self.assertEqual(len(invoker.calls), 2)
+
+        with self.assertRaises(
+            RobinhoodOrderNotReviewedError
+        ):
+            client.submit_exit_order(submission)
+
+        self.assertEqual(len(invoker.calls), 2)
+
+    def test_persists_attempt_before_invoking_place(
+        self,
+    ) -> None:
+        submission = self.make_equity_submission()
+        attempted_at = self.PLACEMENT_ATTEMPTED_AT
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = (
+                Path(directory) / "placement.sqlite3"
+            )
+
+            journal = SQLitePlacementAttemptJournal(
+                database_path
+            )
+            journal.initialize()
+
+            class JournalCheckingInvoker:
+                def __init__(self) -> None:
+                    self.calls = []
+                    self.record_at_place = None
+
+                def call_tool(
+                    self,
+                    tool_name,
+                    arguments,
+                ):
+                    self.calls.append(
+                        (tool_name, dict(arguments))
+                    )
+
+                    if tool_name == "review_equity_order":
+                        return {
+                            "data": {
+                                "order_checks": {},
+                            }
+                        }
+
+                    if tool_name == "place_equity_order":
+                        # A separate connection must see the
+                        # committed record before place proceeds.
+                        reopened = SQLitePlacementAttemptJournal(
+                            database_path
+                        )
+                        self.record_at_place = reopened.get(
+                            submission.ref_id
+                        )
+
+                        return {
+                            "data": {
+                                "order": {
+                                    "id": "broker-order-123",
+                                    "ref_id": submission.ref_id,
+                                }
+                            }
+                        }
+
+                    raise AssertionError(
+                        f"unexpected MCP tool: {tool_name}"
+                    )
+
+            invoker = JournalCheckingInvoker()
+
+            receipt = RobinhoodOrderReceipt(
+                broker_order_id="broker-order-123",
+                submitted_at=attempted_at,
+            )
+
+            client = self.make_client(
+                invoker,
+                receipt_decoder=FakeReceiptDecoder(receipt),
+                placement_clock=lambda: attempted_at,
+                placement_journal=journal,
+            )
+
+            review = client.review_exit_order(submission)
+            self.assertTrue(review.approved)
+
+            result = client.submit_exit_order(submission)
+
+            self.assertEqual(result, receipt)
+
+            self.assertEqual(
+                invoker.record_at_place,
+                PlacementAttemptRecord(
+                    submission=submission,
+                    placement_attempted_at=attempted_at,
+                ),
+            )
+
+            self.assertEqual(
+                len(invoker.calls),
+                2,
+            )
+
+            self.assertEqual(
+                invoker.calls[1][0],
+                "place_equity_order",
+            )
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Protocol
 
@@ -68,9 +68,18 @@ class RobinhoodPlacementReconciler:
         lookup: RobinhoodOrderLookup,
         *,
         clock: Callable[[], datetime],
+        not_found_grace_period: timedelta,
     ) -> None:
+        if not_found_grace_period < timedelta(0):
+            raise ValueError(
+                "not_found_grace_period cannot be negative"
+            )
+
         self._lookup = lookup
         self._clock = clock
+        self._not_found_grace_period = (
+            not_found_grace_period
+        )
 
     def reconcile(
         self,
@@ -103,6 +112,30 @@ class RobinhoodPlacementReconciler:
             result.status
             is RobinhoodOrderLookupStatus.NOT_FOUND
         ):
+            elapsed = (
+                checked_at
+                - request.placement_attempted_at
+            )
+
+            if elapsed < timedelta(0):
+                raise ValueError(
+                    "reconciliation check cannot precede "
+                    "placement attempt"
+                )
+
+            if elapsed < self._not_found_grace_period:
+                return PlacementReconciliationOutcome(
+                    request=request,
+                    status=(
+                        PlacementReconciliationStatus.STILL_UNKNOWN
+                    ),
+                    checked_at=checked_at,
+                    message=(
+                        "order not found within placement "
+                        "reconciliation grace period"
+                    ),
+                )
+
             return PlacementReconciliationOutcome(
                 request=request,
                 status=PlacementReconciliationStatus.NOT_FOUND,
