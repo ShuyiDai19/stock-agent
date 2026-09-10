@@ -25,15 +25,24 @@ from stock_agent.brokers.robinhood.placement_journal import (
     PlacementAttemptAlreadyExistsError,
     PlacementAttemptRecord,
     SQLitePlacementAttemptJournal,
+    PlacementAcknowledgement,
+    PlacementAttemptStateConflictError,
+    PlacementAttemptStatus,
+    RobinhoodAcknowledgementPersistenceError,
 )
 
 class FakePlacementAttemptJournal:
     def __init__(self) -> None:
         self.records = {}
-        self.insert_count = 0
+        self.calls = []
 
-    def insert(self, record: PlacementAttemptRecord) -> None:
-        self.insert_count += 1
+    def insert(
+        self,
+        record: PlacementAttemptRecord,
+    ) -> None:
+        self.calls.append(
+            ("insert", record.submission.ref_id)
+        )
 
         ref_id = record.submission.ref_id
 
@@ -43,6 +52,65 @@ class FakePlacementAttemptJournal:
             )
 
         self.records[ref_id] = record
+
+    def transition(
+        self,
+        ref_id: str,
+        *,
+        expected_status: PlacementAttemptStatus,
+        new_status: PlacementAttemptStatus,
+    ) -> None:
+        self.calls.append(
+            (
+                "transition",
+                ref_id,
+                expected_status,
+                new_status,
+            )
+        )
+
+        record = self.records.get(ref_id)
+
+        if (
+            record is None
+            or record.status is not expected_status
+        ):
+            raise PlacementAttemptStateConflictError(
+                "placement attempt is missing or "
+                "its status has changed"
+            )
+
+        self.records[ref_id] = replace(
+            record,
+            status=new_status,
+        )
+
+    def acknowledge(
+        self,
+        ref_id: str,
+        acknowledgement: PlacementAcknowledgement,
+    ) -> None:
+        self.calls.append(
+            ("acknowledge", ref_id)
+        )
+
+        record = self.records.get(ref_id)
+
+        if (
+            record is None
+            or record.status
+            is not PlacementAttemptStatus.SUBMITTING
+        ):
+            raise PlacementAttemptStateConflictError(
+                "placement attempt cannot be acknowledged "
+                "from its current state"
+            )
+
+        self.records[ref_id] = replace(
+            record,
+            status=PlacementAttemptStatus.ACKNOWLEDGED,
+            acknowledgement=acknowledgement,
+        )
 
 class FakeReceiptDecoder:
     def __init__(

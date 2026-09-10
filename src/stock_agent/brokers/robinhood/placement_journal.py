@@ -31,8 +31,28 @@ class PlacementAttemptAlreadyExistsError(RuntimeError):
 class PlacementAttemptStatus(str, Enum):
     PREPARED = "prepared"
     SUBMITTING = "submitting"
+    ACKNOWLEDGED = "acknowledged"
+    NOT_SENT = "not_sent"
     UNCERTAIN = "uncertain"
 
+@dataclass(frozen=True)
+class PlacementAcknowledgement:
+    broker_order_id: str
+    acknowledged_at: datetime
+
+    def __post_init__(self) -> None:
+        if not self.broker_order_id.strip():
+            raise ValueError(
+                "broker_order_id cannot be empty"
+            )
+
+        if (
+            self.acknowledged_at.tzinfo is None
+            or self.acknowledged_at.utcoffset() is None
+        ):
+            raise ValueError(
+                "acknowledged_at must be timezone-aware"
+            )
 
 class PlacementAttemptStateConflictError(RuntimeError):
     pass
@@ -41,7 +61,10 @@ class PlacementAttemptStateConflictError(RuntimeError):
 class PlacementAttemptRecord:
     submission: RobinhoodExitSubmission
     placement_attempted_at: datetime
-    status: PlacementAttemptStatus = PlacementAttemptStatus.PREPARED
+    status: PlacementAttemptStatus = (
+        PlacementAttemptStatus.PREPARED
+    )
+    acknowledgement: PlacementAcknowledgement | None = None
 
     def __post_init__(self) -> None:
         build_placement_reconciliation_request(
@@ -49,11 +72,48 @@ class PlacementAttemptRecord:
             placement_attempted_at=self.placement_attempted_at,
         )
 
-        if not isinstance(self.status, PlacementAttemptStatus):
-            raise ValueError("invalid placement attempt status")
+        if not isinstance(
+            self.status,
+            PlacementAttemptStatus,
+        ):
+            raise ValueError(
+                "invalid placement attempt status"
+            )
+
+        if (
+            self.status
+            is PlacementAttemptStatus.ACKNOWLEDGED
+        ):
+            if self.acknowledgement is None:
+                raise ValueError(
+                    "acknowledged placement requires acknowledgement"
+                )
+        elif self.acknowledgement is not None:
+            raise ValueError(
+                "non-acknowledged placement cannot contain acknowledgement"
+            )
 
 class PlacementAttemptJournal(Protocol):
-    def insert(self, record: PlacementAttemptRecord) -> None:
+    def insert(
+        self,
+        record: PlacementAttemptRecord,
+    ) -> None:
+        ...
+
+    def transition(
+        self,
+        ref_id: str,
+        *,
+        expected_status: PlacementAttemptStatus,
+        new_status: PlacementAttemptStatus,
+    ) -> None:
+        ...
+
+    def acknowledge(
+        self,
+        ref_id: str,
+        acknowledgement: PlacementAcknowledgement,
+    ) -> None:
         ...
 
 
@@ -119,7 +179,9 @@ class SQLitePlacementAttemptJournal:
                         ref_id TEXT PRIMARY KEY,
                         submission_json TEXT NOT NULL,
                         placement_attempted_at TEXT NOT NULL,
-                        status TEXT NOT NULL DEFAULT 'prepared'
+                        status TEXT NOT NULL DEFAULT 'prepared',
+                        broker_order_id TEXT,
+                        acknowledged_at TEXT
                     )
                     """
                 )
@@ -139,10 +201,31 @@ class SQLitePlacementAttemptJournal:
                         """
                     )
 
+                if "broker_order_id" not in columns:
+                    connection.execute(
+                        """
+                        ALTER TABLE placement_attempts
+                        ADD COLUMN broker_order_id TEXT
+                        """
+                    )
+
+                if "acknowledged_at" not in columns:
+                    connection.execute(
+                        """
+                        ALTER TABLE placement_attempts
+                        ADD COLUMN acknowledged_at TEXT
+                        """
+                    )
+
     def insert(self, record: PlacementAttemptRecord) -> None:
         if record.status is not PlacementAttemptStatus.PREPARED:
             raise ValueError(
                 "new placement attempt must be prepared"
+            )
+
+        if record.acknowledgement is not None:
+            raise ValueError(
+                "new placement attempt cannot be acknowledged"
             )
         
         submission_json = json.dumps(
@@ -161,8 +244,10 @@ class SQLitePlacementAttemptJournal:
                             ref_id,
                             submission_json,
                             placement_attempted_at,
-                            status
-                        ) VALUES (?, ?, ?, ?)
+                            status,
+                            broker_order_id,
+                            acknowledged_at
+                        ) VALUES (?, ?, ?, ?, NULL, NULL)
                         """,
                         (
                             record.submission.ref_id,
@@ -180,7 +265,12 @@ class SQLitePlacementAttemptJournal:
         with closing(self._connect()) as connection:
             row = connection.execute(
                 """
-                SELECT submission_json, placement_attempted_at, status
+                SELECT
+                    submission_json,
+                    placement_attempted_at,
+                    status,
+                    broker_order_id,
+                    acknowledged_at
                 FROM placement_attempts
                 WHERE ref_id = ?
                 """,
@@ -190,10 +280,36 @@ class SQLitePlacementAttemptJournal:
         if row is None:
             return None
 
+        broker_order_id = row[3]
+        acknowledged_at_raw = row[4]
+
+        if (
+            (broker_order_id is None)
+            != (acknowledged_at_raw is None)
+        ):
+            raise ValueError(
+                "placement acknowledgement is incomplete"
+            )
+
+        acknowledgement = None
+
+        if broker_order_id is not None:
+            acknowledgement = PlacementAcknowledgement(
+                broker_order_id=broker_order_id,
+                acknowledged_at=datetime.fromisoformat(
+                    acknowledged_at_raw
+                ),
+            )
+
         return PlacementAttemptRecord(
-            submission=_decode_submission(json.loads(row[0])),
-            placement_attempted_at=datetime.fromisoformat(row[1]),
+            submission=_decode_submission(
+                json.loads(row[0])
+            ),
+            placement_attempted_at=datetime.fromisoformat(
+                row[1]
+            ),
             status=PlacementAttemptStatus(row[2]),
+            acknowledgement=acknowledgement,
         )
 
     def transition(
@@ -211,6 +327,10 @@ class SQLitePlacementAttemptJournal:
             (
                 PlacementAttemptStatus.PREPARED,
                 PlacementAttemptStatus.UNCERTAIN,
+            ),
+            (
+                PlacementAttemptStatus.SUBMITTING,
+                PlacementAttemptStatus.NOT_SENT,
             ),
             (
                 PlacementAttemptStatus.SUBMITTING,
@@ -243,4 +363,38 @@ class SQLitePlacementAttemptJournal:
                     raise PlacementAttemptStateConflictError(
                         "placement attempt is missing or "
                         "its status has changed"
+                    )
+
+    def acknowledge(
+        self,
+        ref_id: str,
+        acknowledgement: PlacementAcknowledgement,
+    ) -> None:
+        with closing(self._connect()) as connection:
+            with connection:
+                cursor = connection.execute(
+                    """
+                    UPDATE placement_attempts
+                    SET
+                        status = ?,
+                        broker_order_id = ?,
+                        acknowledged_at = ?
+                    WHERE ref_id = ?
+                    AND status = ?
+                    AND broker_order_id IS NULL
+                    AND acknowledged_at IS NULL
+                    """,
+                    (
+                        PlacementAttemptStatus.ACKNOWLEDGED.value,
+                        acknowledgement.broker_order_id,
+                        acknowledgement.acknowledged_at.isoformat(),
+                        ref_id,
+                        PlacementAttemptStatus.SUBMITTING.value,
+                    ),
+                )
+
+                if cursor.rowcount != 1:
+                    raise PlacementAttemptStateConflictError(
+                        "placement attempt cannot be acknowledged "
+                        "from its current state"
                     )
