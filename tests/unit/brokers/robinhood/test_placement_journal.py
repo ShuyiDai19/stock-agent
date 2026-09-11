@@ -23,6 +23,21 @@ from stock_agent.domain import AssetType
 
 
 class SQLitePlacementAttemptJournalTests(unittest.TestCase):
+    PREPARED_REF_ID = (
+        "123e4567-e89b-12d3-a456-426614174001"
+    )
+    SUBMITTING_REF_ID = (
+        "123e4567-e89b-12d3-a456-426614174002"
+    )
+    UNCERTAIN_REF_ID = (
+        "123e4567-e89b-12d3-a456-426614174003"
+    )
+    NOT_SENT_REF_ID = (
+        "123e4567-e89b-12d3-a456-426614174004"
+    )
+    ACKNOWLEDGED_REF_ID = (
+        "123e4567-e89b-12d3-a456-426614174005"
+    )
     REF_ID = "123e4567-e89b-12d3-a456-426614174000"
     ATTEMPTED_AT = datetime(
         2026, 9, 2, 4, 50, tzinfo=timezone.utc
@@ -40,7 +55,12 @@ class SQLitePlacementAttemptJournalTests(unittest.TestCase):
         )
         self.journal.initialize()
 
-    def make_equity_record(self) -> PlacementAttemptRecord:
+    def make_equity_record(
+        self,
+        *,
+        ref_id: str | None = None,
+        attempted_at: datetime | None = None,
+    ) -> PlacementAttemptRecord:
         submission = RobinhoodExitSubmission(
             request=RobinhoodExitOrderRequest(
                 position_id="position-123",
@@ -51,12 +71,15 @@ class SQLitePlacementAttemptJournalTests(unittest.TestCase):
                 action=RobinhoodExitAction.EQUITY_SELL,
                 option_id=None,
             ),
-            ref_id=self.REF_ID,
+            ref_id=ref_id or self.REF_ID,
             order_type=RobinhoodOrderType.MARKET,
         )
+
         return PlacementAttemptRecord(
             submission=submission,
-            placement_attempted_at=self.ATTEMPTED_AT,
+            placement_attempted_at=(
+                attempted_at or self.ATTEMPTED_AT
+            ),
         )
 
     def test_persists_exact_submission_across_reopen(self) -> None:
@@ -486,6 +509,211 @@ class SQLitePlacementAttemptJournalTests(unittest.TestCase):
 
         self.assertIsNone(
             persisted.acknowledgement,
+        )
+
+    def test_lists_only_unresolved_attempts(
+        self,
+    ) -> None:
+        prepared = self.make_equity_record(
+            ref_id=self.PREPARED_REF_ID,
+            attempted_at=datetime(
+                2026,
+                9,
+                2,
+                4,
+                40,
+                tzinfo=timezone.utc,
+            ),
+        )
+
+        submitting = self.make_equity_record(
+            ref_id=self.SUBMITTING_REF_ID,
+            attempted_at=datetime(
+                2026,
+                9,
+                2,
+                4,
+                41,
+                tzinfo=timezone.utc,
+            ),
+        )
+
+        uncertain = self.make_equity_record(
+            ref_id=self.UNCERTAIN_REF_ID,
+            attempted_at=datetime(
+                2026,
+                9,
+                2,
+                4,
+                42,
+                tzinfo=timezone.utc,
+            ),
+        )
+
+        not_sent = self.make_equity_record(
+            ref_id=self.NOT_SENT_REF_ID,
+            attempted_at=datetime(
+                2026,
+                9,
+                2,
+                4,
+                43,
+                tzinfo=timezone.utc,
+            ),
+        )
+
+        acknowledged = self.make_equity_record(
+            ref_id=self.ACKNOWLEDGED_REF_ID,
+            attempted_at=datetime(
+                2026,
+                9,
+                2,
+                4,
+                44,
+                tzinfo=timezone.utc,
+            ),
+        )
+
+        for record in (
+            prepared,
+            submitting,
+            uncertain,
+            not_sent,
+            acknowledged,
+        ):
+            self.journal.insert(record)
+
+        self.journal.transition(
+            submitting.submission.ref_id,
+            expected_status=PlacementAttemptStatus.PREPARED,
+            new_status=PlacementAttemptStatus.SUBMITTING,
+        )
+
+        self.journal.transition(
+            uncertain.submission.ref_id,
+            expected_status=PlacementAttemptStatus.PREPARED,
+            new_status=PlacementAttemptStatus.SUBMITTING,
+        )
+
+        self.journal.transition(
+            uncertain.submission.ref_id,
+            expected_status=PlacementAttemptStatus.SUBMITTING,
+            new_status=PlacementAttemptStatus.UNCERTAIN,
+        )
+
+        self.journal.transition(
+            not_sent.submission.ref_id,
+            expected_status=PlacementAttemptStatus.PREPARED,
+            new_status=PlacementAttemptStatus.SUBMITTING,
+        )
+
+        self.journal.transition(
+            not_sent.submission.ref_id,
+            expected_status=PlacementAttemptStatus.SUBMITTING,
+            new_status=PlacementAttemptStatus.NOT_SENT,
+        )
+
+        self.journal.transition(
+            acknowledged.submission.ref_id,
+            expected_status=PlacementAttemptStatus.PREPARED,
+            new_status=PlacementAttemptStatus.SUBMITTING,
+        )
+
+        self.journal.acknowledge(
+            acknowledged.submission.ref_id,
+            PlacementAcknowledgement(
+                broker_order_id="broker-order-123",
+                acknowledged_at=datetime(
+                    2026,
+                    9,
+                    2,
+                    4,
+                    45,
+                    tzinfo=timezone.utc,
+                ),
+            ),
+        )
+
+        unresolved = (
+            self.journal.list_unresolved()
+        )
+
+        self.assertEqual(
+            [
+                record.status
+                for record in unresolved
+            ],
+            [
+                PlacementAttemptStatus.PREPARED,
+                PlacementAttemptStatus.SUBMITTING,
+                PlacementAttemptStatus.UNCERTAIN,
+            ],
+        )
+
+        self.assertEqual(
+            [
+                record.submission.ref_id
+                for record in unresolved
+            ],
+            [
+                self.PREPARED_REF_ID,
+                self.SUBMITTING_REF_ID,
+                self.UNCERTAIN_REF_ID,
+            ],
+        )
+
+    def test_lists_unresolved_attempts_oldest_first(
+        self,
+    ) -> None:
+        later = self.make_equity_record(
+            ref_id=self.SUBMITTING_REF_ID,
+            attempted_at=datetime(
+                2026,
+                9,
+                2,
+                4,
+                50,
+                tzinfo=timezone.utc,
+            ),
+        )
+
+        earlier = self.make_equity_record(
+            ref_id=self.PREPARED_REF_ID,
+            attempted_at=datetime(
+                2026,
+                9,
+                2,
+                4,
+                40,
+                tzinfo=timezone.utc,
+            ),
+        )
+
+        # Insert deliberately out of order.
+        self.journal.insert(later)
+        self.journal.insert(earlier)
+
+        unresolved = (
+            self.journal.list_unresolved()
+        )
+
+        self.assertEqual(
+            [
+                record.submission.ref_id
+                for record in unresolved
+            ],
+            [
+                self.PREPARED_REF_ID,
+                self.SUBMITTING_REF_ID,
+            ],
+        )
+
+    def test_list_unresolved_returns_empty_list(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self.journal.list_unresolved(),
+            [],
         )
 
 if __name__ == "__main__":

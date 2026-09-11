@@ -28,6 +28,8 @@ from stock_agent.brokers.robinhood.placement_journal import (
     PlacementAcknowledgement,
     PlacementAttemptStateConflictError,
     PlacementAttemptStatus,
+)
+from stock_agent.brokers.robinhood.errors import (
     RobinhoodAcknowledgementPersistenceError,
 )
 
@@ -239,6 +241,17 @@ class FailingReceiptDecoder:
         self.call_count += 1
         raise self.error
 
+class FailingAcknowledgementJournal(
+    FakePlacementAttemptJournal
+):
+    def acknowledge(
+        self,
+        ref_id,
+        acknowledgement,
+    ) -> None:
+        raise RuntimeError(
+            "acknowledgement write failed"
+        )
 
 class MCPRobinhoodBrokerClientTests(unittest.TestCase):
     REF_ID = (
@@ -547,9 +560,12 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             receipt
         )
 
+        journal = FakePlacementAttemptJournal()
+
         client = self.make_client(
             invoker,
             receipt_decoder=decoder,
+            placement_journal=journal,
         )
 
         review = client.review_exit_order(
@@ -634,6 +650,52 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             receipt,
         )
 
+        persisted = journal.records[
+            submission.ref_id
+        ]
+
+        self.assertEqual(
+            persisted.status,
+            PlacementAttemptStatus.ACKNOWLEDGED,
+        )
+
+        self.assertIsNotNone(
+            persisted.acknowledgement,
+        )
+
+        self.assertEqual(
+            persisted.acknowledgement.broker_order_id,
+            receipt.broker_order_id,
+        )
+
+        self.assertEqual(
+            persisted.acknowledgement.acknowledged_at,
+            receipt.submitted_at,
+        )
+
+        self.assertEqual(
+            journal.calls[0][0],
+            "insert",
+        )
+
+        self.assertEqual(
+            journal.calls[1],
+            (
+                "transition",
+                submission.ref_id,
+                PlacementAttemptStatus.PREPARED,
+                PlacementAttemptStatus.SUBMITTING,
+            ),
+        )
+
+        self.assertEqual(
+            journal.calls[2],
+            (
+                "acknowledge",
+                submission.ref_id,
+            ),
+        )
+
     def test_marks_unclassified_place_error_as_uncertain(
         self,
     ) -> None:
@@ -646,26 +708,40 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
                         "order_checks": {},
                     }
                 },
-                RuntimeError("MCP place failed"),
+                RuntimeError(
+                    "MCP place failed"
+                ),
             ]
         )
 
         receipt_decoder = RobinhoodMCPReceiptDecoder(
-            clock=lambda: datetime.now(timezone.utc),
+            clock=lambda: datetime.now(
+                timezone.utc
+            ),
         )
+
+        journal = FakePlacementAttemptJournal()
 
         client = self.make_client(
             invoker,
             receipt_decoder=receipt_decoder,
+            placement_journal=journal,
         )
 
-        review = client.review_exit_order(submission)
-        self.assertTrue(review.approved)
+        review = client.review_exit_order(
+            submission
+        )
+
+        self.assertTrue(
+            review.approved,
+        )
 
         with self.assertRaises(
             RobinhoodPlacementUncertainError
         ) as context:
-            client.submit_exit_order(submission)
+            client.submit_exit_order(
+                submission
+            )
 
         error = context.exception
 
@@ -673,27 +749,58 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             error.__cause__,
             RuntimeError,
         )
+
         self.assertEqual(
             str(error.__cause__),
             "MCP place failed",
         )
+
         self.assertEqual(
             error.ref_id,
             submission.ref_id,
         )
+
         self.assertEqual(
             error.position_id,
             submission.request.position_id,
         )
 
-        self.assertEqual(len(invoker.calls), 2)
+        self.assertEqual(
+            len(invoker.calls),
+            2,
+        )
+
         self.assertEqual(
             invoker.calls[0][0],
             "review_equity_order",
         )
+
         self.assertEqual(
             invoker.calls[1][0],
             "place_equity_order",
+        )
+
+        persisted = journal.records[
+            submission.ref_id
+        ]
+
+        self.assertEqual(
+            persisted.status,
+            PlacementAttemptStatus.UNCERTAIN,
+        )
+
+        self.assertIsNone(
+            persisted.acknowledgement,
+        )
+
+        self.assertEqual(
+            journal.calls[2],
+            (
+                "transition",
+                submission.ref_id,
+                PlacementAttemptStatus.SUBMITTING,
+                PlacementAttemptStatus.UNCERTAIN,
+            ),
         )
 
         # Approval was consumed before the external place call.
@@ -702,9 +809,14 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             RobinhoodOrderNotReviewedError,
             "has not been approved by review",
         ):
-            client.submit_exit_order(submission)
+            client.submit_exit_order(
+                submission
+            )
 
-        self.assertEqual(len(invoker.calls), 2)
+        self.assertEqual(
+            len(invoker.calls),
+            2,
+        )
 
     def test_does_not_invoke_place_without_receipt_decoder(
         self,
@@ -1293,12 +1405,15 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
             )
         )
 
+        journal = FakePlacementAttemptJournal()
+
         client = self.make_client(
             invoker,
             receipt_decoder=decoder,
             placement_clock=lambda: (
                 self.PLACEMENT_ATTEMPTED_AT
             ),
+            placement_journal=journal,
         )
 
         review = client.review_exit_order(
@@ -1356,6 +1471,11 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
         )
 
         self.assertEqual(
+            str(error.__cause__),
+            "invalid placement receipt",
+        )
+
+        self.assertEqual(
             decoder.call_count,
             1,
         )
@@ -1363,6 +1483,29 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
         self.assertEqual(
             len(invoker.calls),
             2,
+        )
+
+        persisted = journal.records[
+            submission.ref_id
+        ]
+
+        self.assertEqual(
+            persisted.status,
+            PlacementAttemptStatus.UNCERTAIN,
+        )
+
+        self.assertIsNone(
+            persisted.acknowledgement,
+        )
+
+        self.assertEqual(
+            journal.calls[2],
+            (
+                "transition",
+                submission.ref_id,
+                PlacementAttemptStatus.SUBMITTING,
+                PlacementAttemptStatus.UNCERTAIN,
+            ),
         )
 
     def test_option_uncertainty_preserves_option_id(
@@ -1460,39 +1603,96 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
 
         invoker = SequencedFakeMCPToolInvoker(
             results=[
-                {"data": {"order_checks": {}}},
+                {
+                    "data": {
+                        "order_checks": {},
+                    }
+                },
                 MCPToolInvocationNotSentError(
                     "request was not sent"
                 ),
             ]
         )
 
+        journal = FakePlacementAttemptJournal()
+
         client = self.make_client(
             invoker,
             receipt_decoder=RobinhoodMCPReceiptDecoder(
-                clock=lambda: datetime.now(timezone.utc)
+                clock=lambda: datetime.now(
+                    timezone.utc
+                )
             ),
+            placement_journal=journal,
         )
 
-        review = client.review_exit_order(submission)
-        self.assertTrue(review.approved)
+        review = client.review_exit_order(
+            submission
+        )
+
+        self.assertTrue(
+            review.approved,
+        )
 
         with self.assertRaisesRegex(
             MCPToolInvocationNotSentError,
             "request was not sent",
         ):
-            client.submit_exit_order(submission)
+            client.submit_exit_order(
+                submission
+            )
 
-        self.assertEqual(len(invoker.calls), 2)
+        self.assertEqual(
+            len(invoker.calls),
+            2,
+        )
+
+        persisted = journal.records[
+            submission.ref_id
+        ]
+
+        self.assertEqual(
+            persisted.status,
+            PlacementAttemptStatus.NOT_SENT,
+        )
+
+        self.assertIsNone(
+            persisted.acknowledgement,
+        )
+
+        self.assertEqual(
+            journal.calls[1],
+            (
+                "transition",
+                submission.ref_id,
+                PlacementAttemptStatus.PREPARED,
+                PlacementAttemptStatus.SUBMITTING,
+            ),
+        )
+
+        self.assertEqual(
+            journal.calls[2],
+            (
+                "transition",
+                submission.ref_id,
+                PlacementAttemptStatus.SUBMITTING,
+                PlacementAttemptStatus.NOT_SENT,
+            ),
+        )
 
         with self.assertRaises(
             RobinhoodOrderNotReviewedError
         ):
-            client.submit_exit_order(submission)
+            client.submit_exit_order(
+                submission
+            )
 
-        self.assertEqual(len(invoker.calls), 2)
+        self.assertEqual(
+            len(invoker.calls),
+            2,
+        )
 
-    def test_persists_attempt_before_invoking_place(
+    def test_persists_submitting_attempt_before_invoking_place(
         self,
     ) -> None:
         submission = self.make_equity_submission()
@@ -1571,6 +1771,33 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
 
             result = client.submit_exit_order(submission)
 
+            persisted = journal.get(
+                submission.ref_id
+            )
+
+            self.assertIsNotNone(
+                persisted
+            )
+
+            self.assertEqual(
+                persisted.status,
+                PlacementAttemptStatus.ACKNOWLEDGED,
+            )
+
+            self.assertIsNotNone(
+                persisted.acknowledgement
+            )
+
+            self.assertEqual(
+                persisted.acknowledgement.broker_order_id,
+                "broker-order-123",
+            )
+
+            self.assertEqual(
+                persisted.acknowledgement.acknowledged_at,
+                attempted_at,
+            )
+
             self.assertEqual(result, receipt)
 
             self.assertEqual(
@@ -1578,6 +1805,7 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
                 PlacementAttemptRecord(
                     submission=submission,
                     placement_attempted_at=attempted_at,
+                    status=PlacementAttemptStatus.SUBMITTING,
                 ),
             )
 
@@ -1590,6 +1818,178 @@ class MCPRobinhoodBrokerClientTests(unittest.TestCase):
                 invoker.calls[1][0],
                 "place_equity_order",
             )
+
+    def test_marks_submitting_before_invoking_place(
+        self,
+    ) -> None:
+        submission = self.make_equity_submission()
+        journal = FakePlacementAttemptJournal()
+
+        class StateCheckingInvoker:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def call_tool(
+                inner_self,
+                tool_name,
+                arguments,
+            ):
+                inner_self.calls.append(
+                    (tool_name, dict(arguments))
+                )
+
+                if tool_name == "review_equity_order":
+                    return {
+                        "data": {
+                            "order_checks": {},
+                        }
+                    }
+
+                if tool_name == "place_equity_order":
+                    persisted = journal.records[
+                        submission.ref_id
+                    ]
+
+                    self.assertEqual(
+                        persisted.status,
+                        PlacementAttemptStatus.SUBMITTING,
+                    )
+
+                    return {
+                        "data": {
+                            "order": {
+                                "id": "broker-order-123",
+                                "ref_id": submission.ref_id,
+                            }
+                        }
+                    }
+
+                raise AssertionError(
+                    f"unexpected tool: {tool_name}"
+                )
+
+        invoker = StateCheckingInvoker()
+
+        client = self.make_client(
+            invoker,
+            receipt_decoder=RobinhoodMCPReceiptDecoder(
+                clock=lambda: datetime.now(
+                    timezone.utc
+                )
+            ),
+            placement_journal=journal,
+        )
+
+        review = client.review_exit_order(
+            submission
+        )
+        self.assertTrue(review.approved)
+
+        client.submit_exit_order(
+            submission
+        )
+
+        self.assertEqual(
+            journal.records[
+                submission.ref_id
+            ].status,
+            PlacementAttemptStatus.ACKNOWLEDGED,
+        )
+
+    def test_preserves_known_broker_identity_when_ack_persistence_fails(
+        self,
+    ) -> None:
+        submission = self.make_equity_submission()
+
+        invoker = SequencedFakeMCPToolInvoker(
+            results=[
+                {
+                    "data": {
+                        "order_checks": {},
+                    }
+                },
+                {
+                    "data": {
+                        "order": {
+                            "id": "broker-order-123",
+                            "ref_id": submission.ref_id,
+                        }
+                    }
+                },
+            ]
+        )
+
+        acknowledged_at = datetime(
+            2026,
+            9,
+            10,
+            1,
+            30,
+            tzinfo=timezone.utc,
+        )
+
+        journal = FailingAcknowledgementJournal()
+
+        client = self.make_client(
+            invoker,
+            receipt_decoder=RobinhoodMCPReceiptDecoder(
+                clock=lambda: acknowledged_at
+            ),
+            placement_journal=journal,
+        )
+
+        review = client.review_exit_order(
+            submission
+        )
+        self.assertTrue(review.approved)
+
+        with self.assertRaises(
+            RobinhoodAcknowledgementPersistenceError
+        ) as context:
+            client.submit_exit_order(
+                submission
+            )
+
+        error = context.exception
+
+        self.assertEqual(
+            error.ref_id,
+            submission.ref_id,
+        )
+
+        self.assertEqual(
+            error.broker_order_id,
+            "broker-order-123",
+        )
+
+        self.assertEqual(
+            error.acknowledged_at,
+            acknowledged_at,
+        )
+
+        self.assertIsInstance(
+            error.__cause__,
+            RuntimeError,
+        )
+
+        # The broker place call happened exactly once.
+        self.assertEqual(
+            len(invoker.calls),
+            2,
+        )
+
+        # Approval remains consumed: never blindly place again.
+        with self.assertRaises(
+            RobinhoodOrderNotReviewedError
+        ):
+            client.submit_exit_order(
+                submission
+            )
+
+        self.assertEqual(
+            len(invoker.calls),
+            2,
+        )
 
 if __name__ == "__main__":
     unittest.main()

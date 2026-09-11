@@ -32,6 +32,7 @@ class PlacementAttemptStatus(str, Enum):
     PREPARED = "prepared"
     SUBMITTING = "submitting"
     ACKNOWLEDGED = "acknowledged"
+    RECOVERED = "recovered"
     NOT_SENT = "not_sent"
     UNCERTAIN = "uncertain"
 
@@ -52,6 +53,25 @@ class PlacementAcknowledgement:
         ):
             raise ValueError(
                 "acknowledged_at must be timezone-aware"
+            )
+
+@dataclass(frozen=True)
+class PlacementRecoveryEvidence:
+    broker_order_id: str
+    recovered_at: datetime
+
+    def __post_init__(self) -> None:
+        if not self.broker_order_id.strip():
+            raise ValueError(
+                "broker_order_id cannot be empty"
+            )
+
+        if (
+            self.recovered_at.tzinfo is None
+            or self.recovered_at.utcoffset() is None
+        ):
+            raise ValueError(
+                "recovered_at must be timezone-aware"
             )
 
 class PlacementAttemptStateConflictError(RuntimeError):
@@ -116,6 +136,11 @@ class PlacementAttemptJournal(Protocol):
     ) -> None:
         ...
 
+    def list_unresolved(
+        self,
+    ) -> list[PlacementAttemptRecord]:
+        ...
+
 
 def _json_default(value: Any) -> Any:
     if isinstance(value, Decimal):
@@ -154,6 +179,48 @@ def _decode_submission(payload: dict[str, Any]) -> RobinhoodExitSubmission:
             if limit_price is not None
             else None
         ),
+    )
+
+def _decode_placement_attempt_row(
+    row: tuple[Any, ...],
+) -> PlacementAttemptRecord:
+    (
+        submission_json,
+        placement_attempted_at_raw,
+        status_raw,
+        broker_order_id,
+        acknowledged_at_raw,
+    ) = row
+
+    if (
+        (broker_order_id is None)
+        != (acknowledged_at_raw is None)
+    ):
+        raise ValueError(
+            "placement acknowledgement is incomplete"
+        )
+
+    acknowledgement = None
+
+    if broker_order_id is not None:
+        acknowledgement = PlacementAcknowledgement(
+            broker_order_id=broker_order_id,
+            acknowledged_at=datetime.fromisoformat(
+                acknowledged_at_raw
+            ),
+        )
+
+    return PlacementAttemptRecord(
+        submission=_decode_submission(
+            json.loads(submission_json)
+        ),
+        placement_attempted_at=datetime.fromisoformat(
+            placement_attempted_at_raw
+        ),
+        status=PlacementAttemptStatus(
+            status_raw
+        ),
+        acknowledgement=acknowledgement,
     )
 
 
@@ -261,7 +328,10 @@ class SQLitePlacementAttemptJournal:
                     "placement attempt ref_id already exists"
                 ) from exc
 
-    def get(self, ref_id: str) -> PlacementAttemptRecord | None:
+    def get(
+        self,
+        ref_id: str,
+    ) -> PlacementAttemptRecord | None:
         with closing(self._connect()) as connection:
             row = connection.execute(
                 """
@@ -280,36 +350,8 @@ class SQLitePlacementAttemptJournal:
         if row is None:
             return None
 
-        broker_order_id = row[3]
-        acknowledged_at_raw = row[4]
-
-        if (
-            (broker_order_id is None)
-            != (acknowledged_at_raw is None)
-        ):
-            raise ValueError(
-                "placement acknowledgement is incomplete"
-            )
-
-        acknowledgement = None
-
-        if broker_order_id is not None:
-            acknowledgement = PlacementAcknowledgement(
-                broker_order_id=broker_order_id,
-                acknowledged_at=datetime.fromisoformat(
-                    acknowledged_at_raw
-                ),
-            )
-
-        return PlacementAttemptRecord(
-            submission=_decode_submission(
-                json.loads(row[0])
-            ),
-            placement_attempted_at=datetime.fromisoformat(
-                row[1]
-            ),
-            status=PlacementAttemptStatus(row[2]),
-            acknowledgement=acknowledgement,
+        return _decode_placement_attempt_row(
+            row
         )
 
     def transition(
@@ -398,3 +440,35 @@ class SQLitePlacementAttemptJournal:
                         "placement attempt cannot be acknowledged "
                         "from its current state"
                     )
+
+    def list_unresolved(
+        self,
+    ) -> list[PlacementAttemptRecord]:
+        unresolved_statuses = (
+            PlacementAttemptStatus.PREPARED.value,
+            PlacementAttemptStatus.SUBMITTING.value,
+            PlacementAttemptStatus.UNCERTAIN.value,
+        )
+
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    submission_json,
+                    placement_attempted_at,
+                    status,
+                    broker_order_id,
+                    acknowledged_at
+                FROM placement_attempts
+                WHERE status IN (?, ?, ?)
+                ORDER BY
+                    placement_attempted_at ASC,
+                    ref_id ASC
+                """,
+                unresolved_statuses,
+            ).fetchall()
+
+        return [
+            _decode_placement_attempt_row(row)
+            for row in rows
+        ]

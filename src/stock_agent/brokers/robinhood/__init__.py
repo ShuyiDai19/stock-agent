@@ -78,6 +78,15 @@ from stock_agent.brokers.robinhood.mcp_order_lookup import (
     build_robinhood_mcp_order_lookup_call,
     decode_robinhood_mcp_order_lookup,
 )
+from stock_agent.brokers.robinhood.placement_recovery import (
+    PlacementRecoveryAction,
+    PlacementRecoveryPlan,
+    PlacementRecoveryPlanner,
+)
+from stock_agent.brokers.robinhood.placement_recovery_service import (
+    PlacementRecoveryResult,
+    PlacementRecoveryService,
+)
 
 
 __all__ = [
@@ -124,4 +133,9 @@ __all__ = [
     "build_robinhood_mcp_order_lookup_call",
     "decode_robinhood_mcp_order_lookup",
     "MCPToolInvocationNotSentError",
+    "PlacementRecoveryAction",
+    "PlacementRecoveryPlan",
+    "PlacementRecoveryPlanner",
+    "PlacementRecoveryResult",
+    "PlacementRecoveryService",
 ]
