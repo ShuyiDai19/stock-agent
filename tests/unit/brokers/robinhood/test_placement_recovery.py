@@ -15,6 +15,7 @@ from stock_agent.brokers.robinhood.placement_journal import (
     PlacementAcknowledgement,
     PlacementAttemptRecord,
     PlacementAttemptStatus,
+    PlacementRecoveryEvidence,
 )
 from stock_agent.domain import AssetType
 
@@ -152,6 +153,31 @@ class PlacementRecoveryPlannerTests(
                 PlacementAttemptStatus.ACKNOWLEDGED
             )
         )
+
+        self.assertEqual(
+            plan.action,
+            PlacementRecoveryAction.NO_ACTION,
+        )
+
+    def test_recovered_requires_no_action(
+        self,
+    ) -> None:
+        record = self.make_record(
+            PlacementAttemptStatus.PREPARED
+        )
+
+        record = replace(
+            record,
+            status=PlacementAttemptStatus.RECOVERED,
+            recovery_evidence=PlacementRecoveryEvidence(
+                broker_order_id="broker-order-123",
+                recovered_at=datetime.now(
+                    timezone.utc
+                ),
+            ),
+        )
+
+        plan = self.planner.plan(record)
 
         self.assertEqual(
             plan.action,

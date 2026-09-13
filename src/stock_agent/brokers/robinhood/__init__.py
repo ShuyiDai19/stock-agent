@@ -87,6 +87,12 @@ from stock_agent.brokers.robinhood.placement_recovery_service import (
     PlacementRecoveryResult,
     PlacementRecoveryService,
 )
+from stock_agent.brokers.robinhood.placement_journal import (
+    PlacementReconciliationObservationRecord,
+    PlacementReconciliationObservationAlreadyExistsError,
+    PlacementAttemptNotFoundError,
+    build_reconciliation_observation,
+)
 
 
 __all__ = [

@@ -50,6 +50,12 @@ class PlacementRecoveryPlanner:
                 action=PlacementRecoveryAction.NO_ACTION,
             )
 
+        if status is PlacementAttemptStatus.RECOVERED:
+            return PlacementRecoveryPlan(
+                record=record,
+                action=PlacementRecoveryAction.NO_ACTION,
+            )
+
         raise ValueError(
             f"unsupported placement attempt status: {status}"
         )

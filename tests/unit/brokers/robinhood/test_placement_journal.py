@@ -10,6 +10,7 @@ from stock_agent.brokers.robinhood import (
     RobinhoodExitOrderRequest,
     RobinhoodExitSubmission,
     RobinhoodOrderType,
+    PlacementReconciliationStatus,
 )
 from stock_agent.brokers.robinhood.placement_journal import (
     PlacementAttemptAlreadyExistsError,
@@ -18,6 +19,10 @@ from stock_agent.brokers.robinhood.placement_journal import (
     PlacementAcknowledgement,
     PlacementAttemptStateConflictError,
     PlacementAttemptStatus,
+    PlacementRecoveryEvidence,
+    PlacementAttemptNotFoundError,
+    PlacementReconciliationObservationAlreadyExistsError,
+    PlacementReconciliationObservationRecord,
 )
 from stock_agent.domain import AssetType
 
@@ -715,6 +720,316 @@ class SQLitePlacementAttemptJournalTests(unittest.TestCase):
             self.journal.list_unresolved(),
             [],
         )
+
+    def test_recovers_unresolved_attempt_with_broker_evidence(
+        self,
+    ) -> None:
+        self.journal.insert(
+            self.make_equity_record()
+        )
+
+        self.journal.transition(
+            self.REF_ID,
+            expected_status=PlacementAttemptStatus.PREPARED,
+            new_status=PlacementAttemptStatus.SUBMITTING,
+        )
+
+        evidence = PlacementRecoveryEvidence(
+            broker_order_id="broker-order-123",
+            recovered_at=datetime(
+                2026,
+                9,
+                11,
+                2,
+                45,
+                tzinfo=timezone.utc,
+            ),
+        )
+
+        self.journal.recover_found(
+            self.REF_ID,
+            evidence,
+        )
+
+        reopened = SQLitePlacementAttemptJournal(
+            self.database_path
+        )
+
+        persisted = reopened.get(
+            self.REF_ID
+        )
+
+        self.assertEqual(
+            persisted.status,
+            PlacementAttemptStatus.RECOVERED,
+        )
+
+        self.assertEqual(
+            persisted.recovery_evidence,
+            evidence,
+        )
+
+        self.assertIsNone(
+            persisted.acknowledgement,
+        )
+
+    def test_recovered_attempt_cannot_be_recovered_twice(
+        self,
+    ) -> None:
+        self.journal.insert(
+            self.make_equity_record()
+        )
+
+        evidence = PlacementRecoveryEvidence(
+            broker_order_id="broker-order-123",
+            recovered_at=datetime.now(
+                timezone.utc
+            ),
+        )
+
+        self.journal.recover_found(
+            self.REF_ID,
+            evidence,
+        )
+
+        with self.assertRaises(
+            PlacementAttemptStateConflictError
+        ):
+            self.journal.recover_found(
+                self.REF_ID,
+                evidence,
+            )
+
+    def test_recovered_record_requires_recovery_evidence(
+        self,
+    ) -> None:
+        record = self.make_equity_record()
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "recovered placement requires recovery evidence",
+        ):
+            PlacementAttemptRecord(
+                submission=record.submission,
+                placement_attempted_at=(
+                    record.placement_attempted_at
+                ),
+                status=PlacementAttemptStatus.RECOVERED,
+            )
+            
+    def test_persists_reconciliation_observation_across_reopen(
+        self,
+    ) -> None:
+        self.journal.insert(
+            self.make_equity_record()
+        )
+
+        observation = (
+            PlacementReconciliationObservationRecord(
+                ref_id=self.REF_ID,
+                status=(
+                    PlacementReconciliationStatus.NOT_FOUND
+                ),
+                checked_at=datetime(
+                    2026,
+                    9,
+                    12,
+                    2,
+                    0,
+                    tzinfo=timezone.utc,
+                ),
+                message="order not found",
+            )
+        )
+
+        self.journal.append_reconciliation_observation(
+            observation
+        )
+
+        reopened = SQLitePlacementAttemptJournal(
+            self.database_path
+        )
+
+        reopened.initialize()
+
+        self.assertEqual(
+            reopened.list_reconciliation_observations(
+                self.REF_ID
+            ),
+            [
+                observation,
+            ],
+        )
+
+    def test_persists_found_reconciliation_observation(
+        self,
+    ) -> None:
+        self.journal.insert(
+            self.make_equity_record()
+        )
+
+        observation = (
+            PlacementReconciliationObservationRecord(
+                ref_id=self.REF_ID,
+                status=(
+                    PlacementReconciliationStatus.FOUND
+                ),
+                checked_at=datetime(
+                    2026,
+                    9,
+                    12,
+                    2,
+                    1,
+                    tzinfo=timezone.utc,
+                ),
+                broker_order_id="broker-order-123",
+            )
+        )
+
+        self.journal.append_reconciliation_observation(
+            observation
+        )
+
+        persisted = (
+            self.journal.list_reconciliation_observations(
+                self.REF_ID
+            )
+        )
+
+        self.assertEqual(
+            persisted,
+            [
+                observation,
+            ],
+        )
+
+    def test_rejects_duplicate_reconciliation_observation(
+        self,
+    ) -> None:
+        self.journal.insert(
+            self.make_equity_record()
+        )
+
+        observation = (
+            PlacementReconciliationObservationRecord(
+                ref_id=self.REF_ID,
+                status=(
+                    PlacementReconciliationStatus.NOT_FOUND
+                ),
+                checked_at=datetime(
+                    2026,
+                    9,
+                    12,
+                    2,
+                    0,
+                    tzinfo=timezone.utc,
+                ),
+            )
+        )
+
+        self.journal.append_reconciliation_observation(
+            observation
+        )
+
+        with self.assertRaises(
+            PlacementReconciliationObservationAlreadyExistsError
+        ):
+            self.journal.append_reconciliation_observation(
+                observation
+            )
+
+        self.assertEqual(
+            len(
+                self.journal
+                .list_reconciliation_observations(
+                    self.REF_ID
+                )
+            ),
+            1,
+        )
+
+    def test_rejects_observation_without_placement_attempt(
+        self,
+    ) -> None:
+        observation = (
+            PlacementReconciliationObservationRecord(
+                ref_id=self.REF_ID,
+                status=(
+                    PlacementReconciliationStatus.NOT_FOUND
+                ),
+                checked_at=datetime.now(
+                    timezone.utc
+                ),
+            )
+        )
+
+        with self.assertRaises(
+            PlacementAttemptNotFoundError
+        ):
+            self.journal.append_reconciliation_observation(
+                observation
+            )
+
+    def test_lists_reconciliation_observations_oldest_first(
+        self,
+    ) -> None:
+        self.journal.insert(
+            self.make_equity_record()
+        )
+
+        later = PlacementReconciliationObservationRecord(
+            ref_id=self.REF_ID,
+            status=(
+                PlacementReconciliationStatus.NOT_FOUND
+            ),
+            checked_at=datetime(
+                2026,
+                9,
+                12,
+                2,
+                2,
+                tzinfo=timezone.utc,
+            ),
+        )
+
+        earlier = PlacementReconciliationObservationRecord(
+            ref_id=self.REF_ID,
+            status=(
+                PlacementReconciliationStatus.NOT_FOUND
+            ),
+            checked_at=datetime(
+                2026,
+                9,
+                12,
+                2,
+                1,
+                tzinfo=timezone.utc,
+            ),
+        )
+
+        # Deliberately persist out of chronological order.
+        self.journal.append_reconciliation_observation(
+            later
+        )
+
+        self.journal.append_reconciliation_observation(
+            earlier
+        )
+
+        observations = (
+            self.journal.list_reconciliation_observations(
+                self.REF_ID
+            )
+        )
+
+        self.assertEqual(
+            observations,
+            [
+                earlier,
+                later,
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
