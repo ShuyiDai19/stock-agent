@@ -93,6 +93,14 @@ from stock_agent.brokers.robinhood.placement_journal import (
     PlacementAttemptNotFoundError,
     build_reconciliation_observation,
 )
+from stock_agent.brokers.robinhood.reconciliation_review import (
+    ReconciliationReviewDecision,
+    ReconciliationReviewPolicy,
+)
+from stock_agent.brokers.robinhood.reconciliation_review_service import (
+    PlacementReconciliationReviewService,
+    restore_reconciliation_outcome,
+)
 
 
 __all__ = [
@@ -144,4 +152,10 @@ __all__ = [
     "PlacementRecoveryPlanner",
     "PlacementRecoveryResult",
     "PlacementRecoveryService",
+    "PlacementReconciliationReviewService",
+    "restore_reconciliation_outcome",
+    "ReconciliationReviewDecision",
+    "ReconciliationReviewPolicy",
+    "PlacementReconciliationReviewService",
+    "restore_reconciliation_outcome",
 ]
