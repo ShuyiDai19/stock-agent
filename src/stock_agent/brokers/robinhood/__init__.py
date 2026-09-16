@@ -101,6 +101,9 @@ from stock_agent.brokers.robinhood.reconciliation_review_service import (
     PlacementReconciliationReviewService,
     restore_reconciliation_outcome,
 )
+from stock_agent.brokers.robinhood.connection import (
+    open_robinhood_mcp_invoker,
+)
 
 
 __all__ = [
@@ -158,4 +161,5 @@ __all__ = [
     "ReconciliationReviewPolicy",
     "PlacementReconciliationReviewService",
     "restore_reconciliation_outcome",
+    "open_robinhood_mcp_invoker",
 ]
