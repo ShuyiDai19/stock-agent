@@ -20,6 +20,9 @@ from mcp.shared.auth import (
     OAuthClientMetadata,
     OAuthToken,
 )
+from stock_agent.brokers.robinhood.oauth_storage import (
+    KeyringTokenStorage,
+)
 
 
 ROBINHOOD_MCP_URL = (
@@ -116,7 +119,7 @@ class RobinhoodOAuthClientFactory:
         self._storage = (
             storage
             if storage is not None
-            else InMemoryTokenStorage()
+            else KeyringTokenStorage()
         )
 
     @asynccontextmanager
@@ -159,6 +162,7 @@ class RobinhoodOAuthClientFactory:
             transport = streamable_http_client(
                 server_url,
                 http_client=http_client,
+                terminate_on_close=False,
             )
 
             async with Client(

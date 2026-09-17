@@ -19,6 +19,7 @@ from mcp.shared.auth import (
     OAuthClientMetadata,
     OAuthToken,
 )
+import os
 
 
 MCP_URL = (
@@ -157,13 +158,84 @@ async def main() -> None:
             )
 
             print(
-                "\nAvailable tools:"
+                "Tool count:",
+                len(result.tools),
             )
 
-            for tool in result.tools:
-                print(
-                    f"- {tool.name}"
+            account_number = os.environ.get(
+                "ROBINHOOD_AGENTIC_ACCOUNT_NUMBER"
+            )
+
+            if not account_number:
+                raise RuntimeError(
+                    "ROBINHOOD_AGENTIC_ACCOUNT_NUMBER "
+                    "is not set"
                 )
+
+            orders_result = await client.call_tool(
+                "get_equity_orders",
+                {
+                    "account_number": account_number,
+                    "placed_agent": "agentic",
+                },
+            )
+
+            if orders_result.is_error:
+                raise RuntimeError(
+                    "get_equity_orders returned an error"
+                )
+
+            content = orders_result.structured_content
+
+            if not isinstance(
+                content,
+                dict,
+            ):
+                raise RuntimeError(
+                    "unexpected structured_content"
+                )
+
+            data = content.get("data")
+
+            if not isinstance(
+                data,
+                dict,
+            ):
+                raise RuntimeError(
+                    "missing data object"
+                )
+
+            orders = data.get("orders")
+
+            if not isinstance(
+                orders,
+                list,
+            ):
+                raise RuntimeError(
+                    "missing orders list"
+                )
+
+            print(
+                "\nRead-only equity-orders call succeeded."
+            )
+
+            print(
+                "Order count:",
+                len(orders),
+            )
+
+            for order in orders[:5]:
+                print(
+                    {
+                        "symbol": order.get("symbol"),
+                        "side": order.get("side"),
+                        "state": order.get("state"),
+                        "created_at": order.get(
+                            "created_at"
+                        ),
+                    }
+                )
+
 
 
 if __name__ == "__main__":
