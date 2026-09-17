@@ -4,6 +4,10 @@ __pycache__/
 .pytest_cache/
 .venv/
 .env
+.env.*
+*.token.json
+tokens.json
+credentials.json
 
 # Codex runtime logs
 codex/**/logs/
@@ -18,6 +22,7 @@ codex/**/.cycle-lock/
 codex/**/.codex/config.toml
 
 # Local application state
+.state/
 /state/
 *.db
 *.sqlite

@@ -104,6 +104,15 @@ from stock_agent.brokers.robinhood.reconciliation_review_service import (
 from stock_agent.brokers.robinhood.connection import (
     open_robinhood_mcp_invoker,
 )
+from stock_agent.brokers.robinhood.broker_runtime import (
+    open_robinhood_broker,
+    open_robinhood_broker_from_env,
+    resolve_live_execution_enabled,
+    RobinhoodStartupRecoverySummary,
+    run_robinhood_startup_recovery,
+    RobinhoodRuntimeSession,
+    open_robinhood_runtime,
+)
 
 
 __all__ = [
@@ -162,4 +171,13 @@ __all__ = [
     "PlacementReconciliationReviewService",
     "restore_reconciliation_outcome",
     "open_robinhood_mcp_invoker",
+    "open_robinhood_broker",
+    "open_robinhood_broker_from_env",
+    "resolve_live_execution_enabled",
+    "RobinhoodRuntimeSession",
+    "RobinhoodStartupRecoverySummary",
+    "open_robinhood_runtime",
+    "run_robinhood_startup_recovery",
+    "RobinhoodStartupRecoverySummary",
+    "run_robinhood_startup_recovery",
 ]
