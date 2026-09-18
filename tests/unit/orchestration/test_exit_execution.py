@@ -47,6 +47,7 @@ class FakeExitExecutor:
 
         return self.result
 
+
 class FakeBatchExitExecutor:
     def __init__(
         self,
@@ -86,6 +87,122 @@ class FakeBatchExitExecutor:
             )
 
         return result
+
+
+class FakePositionStateStore:
+    def __init__(self) -> None:
+        self.states: dict[str, PositionRuntimeState] = {}
+
+    def initialize(self) -> None:
+        pass
+
+    def insert(
+        self,
+        state: PositionRuntimeState,
+    ) -> None:
+        if state.position_id in self.states:
+            raise RuntimeError(
+                "position already exists"
+            )
+
+        self.states[state.position_id] = state
+
+    def get(
+        self,
+        position_id: str,
+    ) -> PositionRuntimeState | None:
+        return self.states.get(
+            position_id
+        )
+
+    def list_by_status(
+        self,
+        *,
+        account_number: str,
+        statuses,
+    ) -> list[PositionRuntimeState]:
+        return [
+            state
+            for state in self.states.values()
+            if state.account_number == account_number
+            and state.status in statuses
+        ]
+
+    def update(
+        self,
+        state: PositionRuntimeState,
+        *,
+        expected_version: int,
+    ) -> None:
+        current = self.states.get(
+            state.position_id
+        )
+
+        if current is None:
+            raise RuntimeError(
+                "position not found"
+            )
+
+        if current.version != expected_version:
+            raise RuntimeError(
+                "concurrent state update"
+            )
+
+        if state.version != expected_version + 1:
+            raise ValueError(
+                "state.version must equal expected_version + 1"
+            )
+
+        self.states[state.position_id] = state
+
+
+class FailingUpdateStore:
+    def __init__(
+        self,
+        delegate,
+    ) -> None:
+        self._delegate = delegate
+
+    def get(
+        self,
+        position_id,
+    ):
+        return self._delegate.get(
+            position_id
+        )
+
+    def list_by_status(
+        self,
+        *,
+        account_number,
+        statuses,
+    ):
+        return self._delegate.list_by_status(
+            account_number=account_number,
+            statuses=statuses,
+        )
+
+    def insert(
+        self,
+        state,
+    ) -> None:
+        self._delegate.insert(state)
+
+    def initialize(
+        self,
+    ) -> None:
+        self._delegate.initialize()
+
+    def update(
+        self,
+        state,
+        *,
+        expected_version,
+    ) -> None:
+        raise RuntimeError(
+            "simulated state persistence failure"
+        )
+
 
 class ExitExecutionCoordinatorTests(unittest.TestCase):
     def make_state(self) -> PositionRuntimeState:
@@ -147,7 +264,11 @@ class ExitExecutionCoordinatorTests(unittest.TestCase):
     def test_does_not_execute_hold_outcome(self) -> None:
         executor = FakeExitExecutor()
         service = ExitExecutionService(executor)
-        coordinator = ExitExecutionCoordinator(service)
+        store = FakePositionStateStore()
+        coordinator = ExitExecutionCoordinator(
+            service,
+            store,
+        )
 
         outcome = PositionMonitorOutcome(
             position_id=self.make_state().position_id,
@@ -174,7 +295,11 @@ class ExitExecutionCoordinatorTests(unittest.TestCase):
     ) -> None:
         executor = FakeExitExecutor()
         service = ExitExecutionService(executor)
-        coordinator = ExitExecutionCoordinator(service)
+        store = FakePositionStateStore()
+        coordinator = ExitExecutionCoordinator(
+            service,
+            store,
+        )
 
         outcome = PositionMonitorOutcome(
             position_id=self.make_state().position_id,
@@ -196,6 +321,7 @@ class ExitExecutionCoordinatorTests(unittest.TestCase):
         )
 
     def test_executes_exit_intent_once(self) -> None:
+        state = self.make_state()
         intent = self.make_exit_intent()
 
         execution_result = ExecutionResult(
@@ -217,7 +343,14 @@ class ExitExecutionCoordinatorTests(unittest.TestCase):
         )
 
         service = ExitExecutionService(executor)
-        coordinator = ExitExecutionCoordinator(service)
+
+        store = FakePositionStateStore()
+        store.insert(state)
+
+        coordinator = ExitExecutionCoordinator(
+            service,
+            store,
+        )
 
         outcome = PositionMonitorOutcome(
             position_id=intent.position_id,
@@ -245,6 +378,24 @@ class ExitExecutionCoordinatorTests(unittest.TestCase):
         self.assertEqual(
             result,
             execution_result,
+        )
+
+        persisted = store.get(
+            state.position_id
+        )
+
+        self.assertIsNotNone(
+            persisted
+        )
+
+        self.assertEqual(
+            persisted.status,
+            PositionStateStatus.CLOSING,
+        )
+
+        self.assertEqual(
+            persisted.version,
+            state.version + 1,
         )
 
     def test_execute_outcomes_isolates_execution_failures(
@@ -323,8 +474,14 @@ class ExitExecutionCoordinatorTests(unittest.TestCase):
             executor
         )
 
+        store = FakePositionStateStore()
+        store.insert(aapl_state)
+        store.insert(msft_state)
+        store.insert(nvda_state)
+
         coordinator = ExitExecutionCoordinator(
-            service
+            service,
+            store,
         )
 
         outcomes = coordinator.execute_outcomes(
@@ -387,6 +544,27 @@ class ExitExecutionCoordinatorTests(unittest.TestCase):
             nvda_result,
         )
 
+        self.assertEqual(
+            store.get(
+                aapl_state.position_id
+            ).status,
+            PositionStateStatus.CLOSING,
+        )
+
+        self.assertEqual(
+            store.get(
+                msft_state.position_id
+            ).status,
+            PositionStateStatus.ACTIVE,
+        )
+
+        self.assertEqual(
+            store.get(
+                nvda_state.position_id
+            ).status,
+            PositionStateStatus.CLOSING,
+        )
+
     def test_execute_outcomes_marks_hold_as_not_attempted(
         self,
     ) -> None:
@@ -394,8 +572,11 @@ class ExitExecutionCoordinatorTests(unittest.TestCase):
         service = ExitExecutionService(
             executor
         )
+        store = FakePositionStateStore()
+
         coordinator = ExitExecutionCoordinator(
-            service
+            service,
+            store,
         )
 
         state = self.make_state()
@@ -435,6 +616,89 @@ class ExitExecutionCoordinatorTests(unittest.TestCase):
         self.assertEqual(
             executor.execute_call_count,
             0,
+        )
+
+    def test_submitted_result_is_preserved_when_state_sync_fails(
+        self,
+    ) -> None:
+        state = self.make_state()
+
+        submitted_result = ExecutionResult(
+            position_id=state.position_id,
+            status=ExecutionStatus.SUBMITTED,
+            submitted_at=datetime.now(
+                timezone.utc
+            ),
+            broker_order_id="broker-order-123",
+        )
+
+        executor = FakeExitExecutor(
+            result=submitted_result
+        )
+
+        base_store = FakePositionStateStore()
+        base_store.insert(state)
+
+        failing_store = FailingUpdateStore(
+            base_store
+        )
+
+        coordinator = ExitExecutionCoordinator(
+            ExitExecutionService(
+                executor
+            ),
+            failing_store,
+        )
+
+        monitor_outcome = PositionMonitorOutcome(
+            position_id=state.position_id,
+            symbol=state.symbol,
+            evaluation=self.make_evaluation(
+                TrailingStopDecision.EXIT
+            ),
+            exit_intent=self.make_exit_intent(),
+        )
+
+        outcomes = coordinator.execute_outcomes(
+            [monitor_outcome]
+        )
+
+        self.assertEqual(
+            len(outcomes),
+            1,
+        )
+
+        outcome = outcomes[0]
+
+        self.assertEqual(
+            outcome.result,
+            submitted_result,
+        )
+
+        self.assertIsNone(
+            outcome.error
+        )
+
+        self.assertFalse(
+            outcome.failed
+        )
+
+        self.assertTrue(
+            outcome.state_sync_failed
+        )
+
+        self.assertIsInstance(
+            outcome.state_sync_error,
+            RuntimeError,
+        )
+
+        persisted = base_store.get(
+            state.position_id
+        )
+
+        self.assertEqual(
+            persisted.status,
+            PositionStateStatus.ACTIVE,
         )
 
 
