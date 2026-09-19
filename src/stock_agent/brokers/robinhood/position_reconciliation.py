@@ -207,7 +207,9 @@ def reconcile_equity_positions(
                 )
 
             if (
-                broker_position
+                local_state.status
+                is not PositionStateStatus.CLOSING
+                and broker_position
                 .shares_available_for_sells
                 < local_state.remaining_quantity
             ):

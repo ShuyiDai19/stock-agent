@@ -6,11 +6,19 @@ from stock_agent.brokers.robinhood.position_reconciliation import (
     EquityPositionReconciliationOutcome,
 )
 
+from stock_agent.state.models import (
+    PositionStateStatus,
+)
+
 
 class EquityPositionReconciliationAction(
     StrEnum
 ):
     MARK_RECONCILED = "mark_reconciled"
+
+    SYNC_CLOSING_QUANTITY = (
+        "sync_closing_quantity"
+    )
 
     REQUIRE_RECONCILIATION = (
         "require_reconciliation"
@@ -50,6 +58,57 @@ def decide_equity_position_reconciliation(
             "reconciliation outcome has no "
             "local position to act on"
         )
+
+    if (
+        local_state.status
+        is PositionStateStatus.CLOSING
+    ):
+        if broker_position is None:
+            return EquityPositionReconciliationDecision(
+                outcome=outcome,
+                action=(
+                    EquityPositionReconciliationAction
+                    .REQUIRE_RECONCILIATION
+                ),
+            )
+
+        if (
+            EquityPositionReconciliationIssue
+            .UNSUPPORTED_POSITION_TYPE
+            in outcome.issues
+        ):
+            return EquityPositionReconciliationDecision(
+                outcome=outcome,
+                action=(
+                    EquityPositionReconciliationAction
+                    .REQUIRE_RECONCILIATION
+                ),
+            )
+
+        if (
+            broker_position.quantity
+            < local_state.remaining_quantity
+            and broker_position.quantity > 0
+        ):
+            return EquityPositionReconciliationDecision(
+                outcome=outcome,
+                action=(
+                    EquityPositionReconciliationAction
+                    .SYNC_CLOSING_QUANTITY
+                ),
+            )
+
+        if (
+            broker_position.quantity
+            > local_state.remaining_quantity
+        ):
+            return EquityPositionReconciliationDecision(
+                outcome=outcome,
+                action=(
+                    EquityPositionReconciliationAction
+                    .REQUIRE_RECONCILIATION
+                ),
+            )
 
     if not outcome.issues:
         return EquityPositionReconciliationDecision(

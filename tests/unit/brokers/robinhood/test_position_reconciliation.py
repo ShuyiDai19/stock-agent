@@ -1,6 +1,8 @@
 import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
+from dataclasses import replace
+
 
 from stock_agent.brokers.robinhood.position_reconciliation import (
     EquityPositionReconciliationIssue,
@@ -13,6 +15,7 @@ from stock_agent.brokers.robinhood.position_snapshots import (
 from stock_agent.domain import AssetType
 from stock_agent.state.models import (
     PositionRuntimeState,
+    PositionStateStatus,
 )
 
 
@@ -221,5 +224,43 @@ class EquityPositionReconciliationTests(
         self.assertIn(
             EquityPositionReconciliationIssue
             .UNSUPPORTED_POSITION_TYPE,
+            outcome.issues,
+        )
+
+    def test_closing_position_with_reserved_shares_still_matches(
+        self,
+    ) -> None:
+        local_state = replace(
+            make_local_state(),
+            status=PositionStateStatus.CLOSING,
+            remaining_quantity=Decimal("1"),
+        )
+
+        broker_position = replace(
+            make_broker_position(),
+            quantity=Decimal("1"),
+            shares_available_for_sells=Decimal("0"),
+        )
+
+        outcomes = reconcile_equity_positions(
+            account_number=local_state.account_number,
+            local_states=[local_state],
+            broker_positions=[broker_position],
+        )
+
+        self.assertEqual(
+            len(outcomes),
+            1,
+        )
+
+        outcome = outcomes[0]
+
+        self.assertTrue(
+            outcome.matched
+        )
+
+        self.assertNotIn(
+            EquityPositionReconciliationIssue
+            .SELLABILITY_RESTRICTED,
             outcome.issues,
         )

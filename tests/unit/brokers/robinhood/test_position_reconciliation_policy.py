@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
+from dataclasses import replace
 
 from stock_agent.brokers.robinhood.position_reconciliation import (
     EquityPositionReconciliationIssue,
@@ -17,6 +18,7 @@ from stock_agent.brokers.robinhood.position_snapshots import (
 from stock_agent.domain import AssetType
 from stock_agent.state.models import (
     PositionRuntimeState,
+    PositionStateStatus,
 )
 
 _NOW = datetime(
@@ -221,4 +223,119 @@ class EquityPositionReconciliationPolicyTests(
             decision.action,
             EquityPositionReconciliationAction
             .REQUIRE_RECONCILIATION,
+        )
+
+    def test_closing_position_with_smaller_broker_quantity_syncs_quantity(
+        self,
+    ) -> None:
+        local_state = replace(
+            make_local_state(),
+            status=PositionStateStatus.CLOSING,
+            remaining_quantity=Decimal("1"),
+        )
+
+        broker_position = replace(
+            make_broker_position(),
+            quantity=Decimal("0.4"),
+            shares_available_for_sells=Decimal("0"),
+        )
+
+        outcome = EquityPositionReconciliationOutcome(
+            symbol="AAPL",
+            local_state=local_state,
+            broker_position=broker_position,
+            issues=frozenset(
+                {
+                    EquityPositionReconciliationIssue
+                    .QUANTITY_MISMATCH
+                }
+            ),
+        )
+
+        decision = (
+            decide_equity_position_reconciliation(
+                outcome
+            )
+        )
+
+        self.assertEqual(
+            decision.action,
+            EquityPositionReconciliationAction
+            .SYNC_CLOSING_QUANTITY,
+        )
+
+    def test_closing_position_with_larger_broker_quantity_requires_reconciliation(
+        self,
+    ) -> None:
+        local_state = replace(
+            make_local_state(),
+            status=PositionStateStatus.CLOSING,
+            remaining_quantity=Decimal("1"),
+        )
+
+        broker_position = replace(
+            make_broker_position(),
+            quantity=Decimal("1.5"),
+        )
+
+        outcome = EquityPositionReconciliationOutcome(
+            symbol="AAPL",
+            local_state=local_state,
+            broker_position=broker_position,
+            issues=frozenset(
+                {
+                    EquityPositionReconciliationIssue
+                    .QUANTITY_MISMATCH
+                }
+            ),
+        )
+
+        decision = (
+            decide_equity_position_reconciliation(
+                outcome
+            )
+        )
+
+        self.assertEqual(
+            decision.action,
+            EquityPositionReconciliationAction
+            .REQUIRE_RECONCILIATION,
+        )
+
+    def test_closing_position_missing_from_broker_requires_reconciliation(
+        self,
+    ) -> None:
+        local_state = replace(
+            make_local_state(),
+            status=PositionStateStatus.CLOSING,
+            remaining_quantity=Decimal("1"),
+        )
+
+        outcome = EquityPositionReconciliationOutcome(
+            symbol="AAPL",
+            local_state=local_state,
+            broker_position=None,
+            issues=frozenset(
+                {
+                    EquityPositionReconciliationIssue
+                    .BROKER_POSITION_MISSING
+                }
+            ),
+        )
+
+        decision = (
+            decide_equity_position_reconciliation(
+                outcome
+            )
+        )
+
+        self.assertEqual(
+            decision.action,
+            EquityPositionReconciliationAction
+            .REQUIRE_RECONCILIATION,
+        )
+
+        self.assertNotEqual(
+            local_state.status,
+            PositionStateStatus.CLOSED,
         )

@@ -290,22 +290,6 @@ class EquityPositionReconciliationStoreTests(
         state = make_local_state()
         self.store.insert(state)
 
-        newer_state = PositionRuntimeState(
-            **{
-                **state.__dict__,
-                "last_reconciled_at": (
-                    _NOW + timedelta(minutes=1)
-                ),
-                "version": state.version + 1,
-            }
-        )
-
-    def test_stale_decision_is_rejected_by_store(
-        self,
-    ) -> None:
-        state = make_local_state()
-        self.store.insert(state)
-
         newer_state = replace(
             state,
             last_reconciled_at=(
@@ -346,3 +330,100 @@ class EquityPositionReconciliationStoreTests(
                     _NOW + timedelta(minutes=5)
                 ),
             )
+
+    def test_sync_closing_quantity_updates_remaining_quantity_and_stays_closing(
+        self,
+    ) -> None:
+        local_state = replace(
+            make_local_state(
+                status=PositionStateStatus.CLOSING,
+            ),
+            remaining_quantity=Decimal("1"),
+        )
+
+        broker_position = replace(
+            make_broker_position(),
+            quantity=Decimal("0.4"),
+            shares_available_for_sells=Decimal("0"),
+        )
+
+        self.store.insert(
+            local_state
+        )
+
+        reconciled_at = (
+            _NOW + timedelta(minutes=5)
+        )
+
+        outcome = EquityPositionReconciliationOutcome(
+            symbol="AAPL",
+            local_state=local_state,
+            broker_position=broker_position,
+            issues=frozenset(
+                {
+                    EquityPositionReconciliationIssue
+                    .QUANTITY_MISMATCH
+                }
+            ),
+        )
+
+        decision = (
+            EquityPositionReconciliationDecision(
+                outcome=outcome,
+                action=(
+                    EquityPositionReconciliationAction
+                    .SYNC_CLOSING_QUANTITY
+                ),
+            )
+        )
+
+        result = apply_equity_position_reconciliation(
+            store=self.store,
+            decision=decision,
+            reconciled_at=reconciled_at,
+        )
+
+        self.assertEqual(
+            result.status,
+            EquityPositionReconciliationApplyStatus
+            .UPDATED,
+        )
+
+        updated_state = result.updated_state
+
+        self.assertIsNotNone(
+            updated_state
+        )
+
+        self.assertEqual(
+            updated_state.remaining_quantity,
+            Decimal("0.4"),
+        )
+
+        self.assertEqual(
+            updated_state.status,
+            PositionStateStatus.CLOSING,
+        )
+
+        self.assertEqual(
+            updated_state.version,
+            local_state.version + 1,
+        )
+
+        persisted = self.store.get(
+            local_state.position_id
+        )
+
+        self.assertIsNotNone(
+            persisted
+        )
+
+        self.assertEqual(
+            persisted.remaining_quantity,
+            Decimal("0.4"),
+        )
+
+        self.assertEqual(
+            persisted.status,
+            PositionStateStatus.CLOSING,
+        )

@@ -246,6 +246,11 @@ class PlacementAttemptJournal(Protocol):
     ) -> list[PlacementAttemptRecord]:
         ...
 
+    def list_resolved(
+        self,
+    ) -> list[PlacementAttemptRecord]:
+        ...
+
     def recover_found(
         self,
         ref_id: str,
@@ -742,6 +747,43 @@ class SQLitePlacementAttemptJournal:
                     ref_id ASC
                 """,
                 unresolved_statuses,
+            ).fetchall()
+
+        return [
+            _decode_placement_attempt_row(
+                row
+            )
+            for row in rows
+        ]
+
+    def list_resolved(
+        self,
+    ) -> list[PlacementAttemptRecord]:
+        resolved_statuses = (
+            PlacementAttemptStatus.ACKNOWLEDGED.value,
+            PlacementAttemptStatus.RECOVERED.value,
+        )
+
+        with closing(
+            self._connect()
+        ) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    submission_json,
+                    placement_attempted_at,
+                    status,
+                    broker_order_id,
+                    acknowledged_at,
+                    recovered_broker_order_id,
+                    recovered_at
+                FROM placement_attempts
+                WHERE status IN (?, ?)
+                ORDER BY
+                    placement_attempted_at ASC,
+                    ref_id ASC
+                """,
+                resolved_statuses,
             ).fetchall()
 
         return [

@@ -94,6 +94,49 @@ def apply_equity_position_reconciliation(
     elif (
         action
         is EquityPositionReconciliationAction
+        .SYNC_CLOSING_QUANTITY
+    ):
+        broker_position = (
+            decision.outcome.broker_position
+        )
+
+        if (
+            local_state.status
+            is not PositionStateStatus.CLOSING
+        ):
+            raise ValueError(
+                "SYNC_CLOSING_QUANTITY requires "
+                "a closing local position"
+            )
+
+        if broker_position is None:
+            raise ValueError(
+                "SYNC_CLOSING_QUANTITY requires "
+                "a broker position"
+            )
+
+        if not (
+            0
+            < broker_position.quantity
+            < local_state.remaining_quantity
+        ):
+            raise ValueError(
+                "SYNC_CLOSING_QUANTITY requires "
+                "a smaller positive broker quantity"
+            )
+
+        updated_state = replace(
+            local_state,
+            remaining_quantity=(
+                broker_position.quantity
+            ),
+            last_reconciled_at=reconciled_at,
+            version=local_state.version + 1,
+        )
+
+    elif (
+        action
+        is EquityPositionReconciliationAction
         .REQUIRE_RECONCILIATION
     ):
         updated_state = replace(
