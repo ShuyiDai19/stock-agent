@@ -1,0 +1,312 @@
+import tempfile
+import unittest
+from datetime import datetime, timezone
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+from stock_agent.brokers.robinhood.entry_placement import (
+    EntryPlacementStatus,
+    RobinhoodEquityEntryPlacementUncertainError,
+    SQLiteEquityEntryPlacementJournal,
+    place_robinhood_equity_entry,
+)
+from stock_agent.brokers.robinhood.entry_review import (
+    RobinhoodEquityEntryReview,
+)
+from stock_agent.strategy.entry_execution import (
+    EquityEntryExecutionMode,
+    EquityEntryExecutionPlan,
+)
+
+
+_NOW = datetime(
+    2026,
+    9,
+    18,
+    18,
+    0,
+    tzinfo=timezone.utc,
+)
+
+_REF_ID = (
+    "123e4567-e89b-12d3-a456-426614174000"
+)
+
+
+class FakeInvoker:
+    def __init__(
+        self,
+        result: Any = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.result = result
+        self.error = error
+        self.calls = []
+
+    def call_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> Any:
+        self.calls.append(
+            (
+                tool_name,
+                dict(arguments),
+            )
+        )
+
+        if self.error is not None:
+            raise self.error
+
+        return self.result
+
+
+def fractional_review(
+    *,
+    approved: bool = True,
+) -> RobinhoodEquityEntryReview:
+    plan = EquityEntryExecutionPlan(
+        symbol="AAPL",
+        mode=(
+            EquityEntryExecutionMode
+            .FRACTIONAL_MARKET
+        ),
+        budget=Decimal("8"),
+        dollar_amount=Decimal("8"),
+        quote_observed_at=_NOW,
+    )
+
+    timestamp = (
+        _NOW
+        .isoformat()
+        .replace(
+            "+00:00",
+            "Z",
+        )
+    )
+
+    return RobinhoodEquityEntryReview(
+        plan=plan,
+        approved=approved,
+        order_checks=(
+            {}
+            if approved
+            else {
+                "test_alert": {
+                    "detail": "not allowed"
+                }
+            }
+        ),
+        quote_data={
+            "bid_price": "199.90",
+            "ask_price": "200.10",
+            "venue_bid_time": timestamp,
+            "venue_ask_time": timestamp,
+        },
+        market_data_disclosure=None,
+    )
+
+
+class EntryPlacementTests(
+    unittest.TestCase
+):
+    def setUp(
+        self,
+    ) -> None:
+        self.temp = (
+            tempfile.TemporaryDirectory()
+        )
+
+        self.journal = (
+            SQLiteEquityEntryPlacementJournal(
+                Path(self.temp.name)
+                / "placement.sqlite3"
+            )
+        )
+
+        self.journal.initialize()
+
+    def tearDown(
+        self,
+    ) -> None:
+        self.temp.cleanup()
+
+    def test_places_fractional_market_entry(
+        self,
+    ) -> None:
+        invoker = FakeInvoker(
+            result={
+                "data": {
+                    "order": {
+                        "id": "broker-order-1",
+                        "ref_id": _REF_ID,
+                    }
+                }
+            }
+        )
+
+        result = place_robinhood_equity_entry(
+            invoker,
+            self.journal,
+            account_number="agentic-account",
+            review=fractional_review(),
+            clock=lambda: _NOW,
+            ref_id_factory=lambda: _REF_ID,
+        )
+
+        self.assertEqual(
+            result.broker_order_id,
+            "broker-order-1",
+        )
+
+        self.assertEqual(
+            invoker.calls,
+            [
+                (
+                    "place_equity_order",
+                    {
+                        "account_number": (
+                            "agentic-account"
+                        ),
+                        "symbol": "AAPL",
+                        "side": "buy",
+                        "time_in_force": "gfd",
+                        "market_hours": (
+                            "regular_hours"
+                        ),
+                        "type": "market",
+                        "dollar_amount": "8",
+                        "ref_id": _REF_ID,
+                    },
+                )
+            ],
+        )
+
+        record = self.journal.get(
+            _REF_ID
+        )
+
+        self.assertIsNotNone(
+            record
+        )
+
+        self.assertEqual(
+            record.status,
+            EntryPlacementStatus
+            .ACKNOWLEDGED,
+        )
+
+        self.assertEqual(
+            record.broker_order_id,
+            "broker-order-1",
+        )
+
+    def test_transport_failure_becomes_uncertain(
+        self,
+    ) -> None:
+        invoker = FakeInvoker(
+            error=RuntimeError(
+                "transport timeout"
+            )
+        )
+
+        with self.assertRaises(
+            RobinhoodEquityEntryPlacementUncertainError
+        ):
+            place_robinhood_equity_entry(
+                invoker,
+                self.journal,
+                account_number="agentic-account",
+                review=fractional_review(),
+                clock=lambda: _NOW,
+                ref_id_factory=lambda: _REF_ID,
+            )
+
+        record = self.journal.get(
+            _REF_ID
+        )
+
+        self.assertEqual(
+            record.status,
+            EntryPlacementStatus
+            .UNCERTAIN,
+        )
+
+        self.assertEqual(
+            len(invoker.calls),
+            1,
+        )
+
+    def test_wrong_receipt_ref_id_becomes_uncertain(
+        self,
+    ) -> None:
+        invoker = FakeInvoker(
+            result={
+                "data": {
+                    "order": {
+                        "id": "broker-order-1",
+                        "ref_id": (
+                            "wrong-ref-id"
+                        ),
+                    }
+                }
+            }
+        )
+
+        with self.assertRaises(
+            RobinhoodEquityEntryPlacementUncertainError
+        ):
+            place_robinhood_equity_entry(
+                invoker,
+                self.journal,
+                account_number="agentic-account",
+                review=fractional_review(),
+                clock=lambda: _NOW,
+                ref_id_factory=lambda: _REF_ID,
+            )
+
+        record = self.journal.get(
+            _REF_ID
+        )
+
+        self.assertEqual(
+            record.status,
+            EntryPlacementStatus
+            .UNCERTAIN,
+        )
+
+    def test_rejected_review_never_reaches_place(
+        self,
+    ) -> None:
+        invoker = FakeInvoker()
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "review was not approved",
+        ):
+            place_robinhood_equity_entry(
+                invoker,
+                self.journal,
+                account_number="agentic-account",
+                review=fractional_review(
+                    approved=False
+                ),
+                clock=lambda: _NOW,
+                ref_id_factory=lambda: _REF_ID,
+            )
+
+        self.assertEqual(
+            invoker.calls,
+            [],
+        )
+
+        self.assertIsNone(
+            self.journal.get(
+                _REF_ID
+            )
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
