@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "mcp>=2,<3",
     "keyring>=25,<26",
+    "exchange-calendars>=4.13.2,<5",
 ]
 
 [tool.setuptools.packages.find]
