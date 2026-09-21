@@ -22,13 +22,16 @@ class RobinhoodOrderExecutionDecoderTests(
         self,
         *,
         state: str,
-        quantity: str = "1",
+        cumulative_quantity: str = "1",
     ) -> dict:
         return {
             "id": self.BROKER_ORDER_ID,
             "ref_id": self.REF_ID,
             "state": state,
-            "quantity": quantity,
+            "quantity": None,
+            "cumulative_quantity": (
+                cumulative_quantity
+            ),
         }
 
     def test_filled_order_returns_full_fill_snapshot(
@@ -150,7 +153,7 @@ class RobinhoodOrderExecutionDecoderTests(
                 expected_ref_id=self.REF_ID,
             )
 
-    def test_filled_order_requires_quantity(
+    def test_filled_order_requires_cumulative_quantity(
         self,
     ) -> None:
         order = self.make_order(
@@ -158,12 +161,12 @@ class RobinhoodOrderExecutionDecoderTests(
         )
 
         order.pop(
-            "quantity"
+            "cumulative_quantity"
         )
 
         with self.assertRaisesRegex(
             ValueError,
-            "quantity must be a string",
+            "cumulative_quantity must be a string",
         ):
             decode_robinhood_filled_order(
                 order,
@@ -173,17 +176,19 @@ class RobinhoodOrderExecutionDecoderTests(
                 expected_ref_id=self.REF_ID,
             )
 
-    def test_filled_order_rejects_invalid_quantity(
+    def test_filled_order_rejects_invalid_cumulative_quantity(
         self,
     ) -> None:
-        for quantity in (
+        for cumulative_quantity in (
             "0",
             "-1",
             "nan",
             "not-a-number",
         ):
             with self.subTest(
-                quantity=quantity
+                cumulative_quantity=(
+                    cumulative_quantity
+                )
             ):
                 with self.assertRaises(
                     ValueError
@@ -191,7 +196,9 @@ class RobinhoodOrderExecutionDecoderTests(
                     decode_robinhood_filled_order(
                         self.make_order(
                             state="filled",
-                            quantity=quantity,
+                            cumulative_quantity=(
+                                cumulative_quantity
+                            ),
                         ),
                         expected_broker_order_id=(
                             self.BROKER_ORDER_ID
@@ -200,6 +207,47 @@ class RobinhoodOrderExecutionDecoderTests(
                             self.REF_ID
                         ),
                     )
+
+    def test_decodes_filled_dollar_based_order_using_cumulative_quantity(
+        self,
+    ) -> None:
+        raw_order = {
+            "id": "broker-order-1",
+            "ref_id": self.REF_ID,
+            "state": "filled",
+            "quantity": None,
+            "cumulative_quantity": (
+                "0.040123"
+            ),
+        }
+
+        snapshot = (
+            decode_robinhood_filled_order(
+                raw_order,
+                expected_broker_order_id=(
+                    "broker-order-1"
+                ),
+                expected_ref_id=self.REF_ID,
+            )
+        )
+
+        self.assertIsNotNone(
+            snapshot
+        )
+
+        self.assertEqual(
+            snapshot.quantity,
+            Decimal("0.040123"),
+        )
+
+        self.assertEqual(
+            snapshot.filled_quantity,
+            Decimal("0.040123"),
+        )
+
+        self.assertTrue(
+            snapshot.confirms_full_fill
+        )
 
 
 if __name__ == "__main__":

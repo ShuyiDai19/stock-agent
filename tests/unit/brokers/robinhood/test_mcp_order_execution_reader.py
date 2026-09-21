@@ -50,13 +50,16 @@ class MCPRobinhoodEquityOrderExecutionReaderTests(
         self,
         *,
         state: str,
-        quantity: str = "1",
-    ) -> dict[str, Any]:
+        cumulative_quantity: str = "1",
+    ) -> dict:
         return {
             "id": self.BROKER_ORDER_ID,
             "ref_id": self.REF_ID,
             "state": state,
-            "quantity": quantity,
+            "quantity": None,
+            "cumulative_quantity": (
+                cumulative_quantity
+            ),
         }
 
     def test_reads_filled_equity_order(

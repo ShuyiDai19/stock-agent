@@ -120,15 +120,21 @@ def decode_robinhood_filled_order(
     if state != OrderStatus.FILLED.value:
         return None
 
-    quantity = _parse_positive_decimal(
-        raw_order.get("quantity"),
-        field_name="quantity",
+    filled_quantity = (
+        _parse_positive_decimal(
+            raw_order.get(
+                "cumulative_quantity"
+            ),
+            field_name=(
+                "cumulative_quantity"
+            ),
+        )
     )
 
     return RobinhoodOrderExecutionSnapshot(
         broker_order_id=broker_order_id,
         ref_id=ref_id,
         status=OrderStatus.FILLED,
-        quantity=quantity,
-        filled_quantity=quantity,
+        quantity=filled_quantity,
+        filled_quantity=filled_quantity,
     )
