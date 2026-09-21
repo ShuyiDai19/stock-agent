@@ -307,6 +307,244 @@ class EntryPlacementTests(
             )
         )
 
+    def test_recovers_uncertain_entry_as_acknowledged(
+        self,
+    ) -> None:
+        invoker = FakeInvoker(
+            error=RuntimeError(
+                "transport timeout"
+            )
+        )
+
+        with self.assertRaises(
+            RobinhoodEquityEntryPlacementUncertainError
+        ):
+            place_robinhood_equity_entry(
+                invoker,
+                self.journal,
+                account_number=(
+                    "agentic-account"
+                ),
+                review=fractional_review(),
+                clock=lambda: _NOW,
+                ref_id_factory=lambda: _REF_ID,
+            )
+
+        recovered_at = _NOW
+
+        self.journal.recover_acknowledged(
+            _REF_ID,
+            broker_order_id=(
+                "broker-order-1"
+            ),
+            recovered_at=recovered_at,
+        )
+
+        record = self.journal.get(
+            _REF_ID
+        )
+
+        self.assertEqual(
+            record.status,
+            EntryPlacementStatus
+            .ACKNOWLEDGED,
+        )
+
+        self.assertEqual(
+            record.broker_order_id,
+            "broker-order-1",
+        )
+
+        self.assertEqual(
+            record.acknowledged_at,
+            recovered_at,
+        )
+
+        self.assertEqual(
+            record.recovered_at,
+            recovered_at,
+        )
+
+    def test_lists_uncertain_entries_for_account(
+        self,
+    ) -> None:
+        other_ref_id = (
+            "123e4567-e89b-12d3-a456-426614174001"
+        )
+
+        first_invoker = FakeInvoker(
+            error=RuntimeError(
+                "transport timeout"
+            )
+        )
+
+        with self.assertRaises(
+            RobinhoodEquityEntryPlacementUncertainError
+        ):
+            place_robinhood_equity_entry(
+                first_invoker,
+                self.journal,
+                account_number=(
+                    "agentic-account"
+                ),
+                review=fractional_review(),
+                clock=lambda: _NOW,
+                ref_id_factory=lambda: _REF_ID,
+            )
+
+        second_invoker = FakeInvoker(
+            error=RuntimeError(
+                "transport timeout"
+            )
+        )
+
+        with self.assertRaises(
+            RobinhoodEquityEntryPlacementUncertainError
+        ):
+            place_robinhood_equity_entry(
+                second_invoker,
+                self.journal,
+                account_number=(
+                    "other-account"
+                ),
+                review=fractional_review(),
+                clock=lambda: _NOW,
+                ref_id_factory=lambda: (
+                    other_ref_id
+                ),
+            )
+
+        records = (
+            self.journal.list_uncertain(
+                account_number=(
+                    "agentic-account"
+                )
+            )
+        )
+
+        self.assertEqual(
+            len(records),
+            1,
+        )
+
+        self.assertEqual(
+            records[0].ref_id,
+            _REF_ID,
+        )
+
+        self.assertEqual(
+            records[0].account_number,
+            "agentic-account",
+        )
+
+        self.assertEqual(
+            records[0].status,
+            EntryPlacementStatus
+            .UNCERTAIN,
+        )
+
+        self.assertIsNone(
+            records[0].broker_order_id
+        )
+
+        self.assertIsNone(
+            records[0].acknowledged_at
+        )
+
+        self.assertIsNone(
+            records[0].recovered_at
+        )
+
+    def test_recovery_rejects_non_uncertain_entry(
+        self,
+    ) -> None:
+        invoker = FakeInvoker(
+            result={
+                "data": {
+                    "order": {
+                        "id": (
+                            "broker-order-1"
+                        ),
+                        "ref_id": _REF_ID,
+                    }
+                }
+            }
+        )
+
+        place_robinhood_equity_entry(
+            invoker,
+            self.journal,
+            account_number=(
+                "agentic-account"
+            ),
+            review=fractional_review(),
+            clock=lambda: _NOW,
+            ref_id_factory=lambda: _REF_ID,
+        )
+
+        before = self.journal.get(
+            _REF_ID
+        )
+
+        self.assertIsNotNone(
+            before
+        )
+
+        self.assertEqual(
+            before.status,
+            EntryPlacementStatus
+            .ACKNOWLEDGED,
+        )
+
+        self.assertEqual(
+            before.broker_order_id,
+            "broker-order-1",
+        )
+
+        self.assertIsNone(
+            before.recovered_at
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "recovery failed",
+        ):
+            self.journal.recover_acknowledged(
+                _REF_ID,
+                broker_order_id=(
+                    "other-broker-order"
+                ),
+                recovered_at=_NOW,
+            )
+
+        after = self.journal.get(
+            _REF_ID
+        )
+
+        self.assertIsNotNone(
+            after
+        )
+
+        self.assertEqual(
+            after.status,
+            EntryPlacementStatus
+            .ACKNOWLEDGED,
+        )
+
+        self.assertEqual(
+            after.broker_order_id,
+            "broker-order-1",
+        )
+
+        self.assertEqual(
+            after.acknowledged_at,
+            before.acknowledged_at,
+        )
+
+        self.assertIsNone(
+            after.recovered_at
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

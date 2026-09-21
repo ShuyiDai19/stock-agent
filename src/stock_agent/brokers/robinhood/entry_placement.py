@@ -50,6 +50,7 @@ class EquityEntryPlacementRecord:
     status: EntryPlacementStatus
     broker_order_id: str | None = None
     acknowledged_at: datetime | None = None
+    recovered_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if not self.ref_id.strip():
@@ -104,6 +105,37 @@ class EquityEntryPlacementRecord:
                 "contain acknowledgement"
             )
 
+        if self.recovered_at is not None:
+            if (
+                self.recovered_at.tzinfo is None
+                or self.recovered_at.utcoffset()
+                is None
+            ):
+                raise ValueError(
+                    "recovered_at must be "
+                    "timezone-aware"
+                )
+
+            if self.status not in {
+                EntryPlacementStatus
+                .ACKNOWLEDGED,
+                EntryPlacementStatus
+                .ACTIVATED,
+            }:
+                raise ValueError(
+                    "recovered entry must be "
+                    "acknowledged or activated"
+                )
+
+            if (
+                self.acknowledged_at
+                != self.recovered_at
+            ):
+                raise ValueError(
+                    "recovered entry acknowledgement "
+                    "must match recovered_at"
+                )
+
 
 @dataclass(frozen=True, slots=True)
 class RobinhoodEquityEntryPlacementResult:
@@ -157,10 +189,32 @@ class SQLiteEquityEntryPlacementJournal:
                         attempted_at TEXT NOT NULL,
                         status TEXT NOT NULL,
                         broker_order_id TEXT,
-                        acknowledged_at TEXT
+                        acknowledged_at TEXT,
+                        recovered_at TEXT
                     )
                     """
                 )
+                columns = {
+                    row[1]
+                    for row
+                    in connection.execute(
+                        """
+                        PRAGMA table_info(
+                            entry_placement_attempts
+                        )
+                        """
+                    )
+                }
+
+                if "recovered_at" not in columns:
+                    connection.execute(
+                        """
+                        ALTER TABLE
+                            entry_placement_attempts
+                        ADD COLUMN
+                            recovered_at TEXT
+                        """
+                    )
 
     def insert(
         self,
@@ -181,9 +235,10 @@ class SQLiteEquityEntryPlacementJournal:
                         attempted_at,
                         status,
                         broker_order_id,
-                        acknowledged_at
+                        acknowledged_at,
+                        recovered_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         record.ref_id,
@@ -200,6 +255,13 @@ class SQLiteEquityEntryPlacementJournal:
                             record.acknowledged_at
                             .isoformat()
                             if record.acknowledged_at
+                            is not None
+                            else None
+                        ),
+                        (
+                            record.recovered_at
+                            .isoformat()
+                            if record.recovered_at
                             is not None
                             else None
                         ),
@@ -294,7 +356,8 @@ class SQLiteEquityEntryPlacementJournal:
                     attempted_at,
                     status,
                     broker_order_id,
-                    acknowledged_at
+                    acknowledged_at,
+                    recovered_at
                 FROM entry_placement_attempts
                 WHERE ref_id = ?
                 """,
@@ -313,6 +376,7 @@ class SQLiteEquityEntryPlacementJournal:
             status,
             broker_order_id,
             acknowledged_at,
+            recovered_at,
         ) = row
 
         return EquityEntryPlacementRecord(
@@ -334,6 +398,13 @@ class SQLiteEquityEntryPlacementJournal:
                     acknowledged_at
                 )
                 if acknowledged_at is not None
+                else None
+            ),
+            recovered_at=(
+                datetime.fromisoformat(
+                    recovered_at
+                )
+                if recovered_at is not None
                 else None
             ),
         )
@@ -361,7 +432,8 @@ class SQLiteEquityEntryPlacementJournal:
                     attempted_at,
                     status,
                     broker_order_id,
-                    acknowledged_at
+                    acknowledged_at,
+                    recovered_at
                 FROM entry_placement_attempts
                 WHERE
                     account_number = ?
@@ -389,6 +461,7 @@ class SQLiteEquityEntryPlacementJournal:
                 status,
                 broker_order_id,
                 acknowledged_at,
+                recovered_at,
             ) = row
 
             records.append(
@@ -422,10 +495,180 @@ class SQLiteEquityEntryPlacementJournal:
                         is not None
                         else None
                     ),
+                    recovered_at=(
+                        datetime.fromisoformat(
+                            recovered_at
+                        )
+                        if recovered_at is not None
+                        else None
+                    ),
                 )
             )
 
         return records
+
+    def list_uncertain(
+        self,
+        *,
+        account_number: str,
+    ) -> list[EquityEntryPlacementRecord]:
+        if not account_number.strip():
+            raise ValueError(
+                "account_number cannot be empty"
+            )
+
+        with closing(
+            self._connect()
+        ) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    ref_id,
+                    account_number,
+                    symbol,
+                    arguments_json,
+                    attempted_at,
+                    status,
+                    broker_order_id,
+                    acknowledged_at,
+                    recovered_at
+                FROM entry_placement_attempts
+                WHERE
+                    account_number = ?
+                    AND status = ?
+                ORDER BY
+                    attempted_at,
+                    ref_id
+                """,
+                (
+                    account_number,
+                    EntryPlacementStatus
+                    .UNCERTAIN.value,
+                ),
+            ).fetchall()
+
+        records = []
+
+        for row in rows:
+            (
+                ref_id,
+                stored_account_number,
+                symbol,
+                arguments_json,
+                attempted_at,
+                status,
+                broker_order_id,
+                acknowledged_at,
+                recovered_at,
+            ) = row
+
+            records.append(
+                EquityEntryPlacementRecord(
+                    ref_id=ref_id,
+                    account_number=(
+                        stored_account_number
+                    ),
+                    symbol=symbol,
+                    arguments=json.loads(
+                        arguments_json
+                    ),
+                    attempted_at=(
+                        datetime.fromisoformat(
+                            attempted_at
+                        )
+                    ),
+                    status=(
+                        EntryPlacementStatus(
+                            status
+                        )
+                    ),
+                    broker_order_id=(
+                        broker_order_id
+                    ),
+                    acknowledged_at=(
+                        datetime.fromisoformat(
+                            acknowledged_at
+                        )
+                        if acknowledged_at
+                        is not None
+                        else None
+                    ),
+                    recovered_at=(
+                        datetime.fromisoformat(
+                            recovered_at
+                        )
+                        if recovered_at
+                        is not None
+                        else None
+                    ),
+                )
+            )
+
+        return records
+
+    def recover_acknowledged(
+        self,
+        ref_id: str,
+        *,
+        broker_order_id: str,
+        recovered_at: datetime,
+    ) -> None:
+        if not ref_id.strip():
+            raise ValueError(
+                "ref_id cannot be empty"
+            )
+
+        if not broker_order_id.strip():
+            raise ValueError(
+                "broker_order_id cannot be empty"
+            )
+
+        if (
+            recovered_at.tzinfo is None
+            or recovered_at.utcoffset()
+            is None
+        ):
+            raise ValueError(
+                "recovered_at must be "
+                "timezone-aware"
+            )
+
+        with closing(
+            self._connect()
+        ) as connection:
+            with connection:
+                cursor = connection.execute(
+                    """
+                    UPDATE entry_placement_attempts
+                    SET
+                        status = ?,
+                        broker_order_id = ?,
+                        acknowledged_at = ?,
+                        recovered_at = ?
+                    WHERE
+                        ref_id = ?
+                        AND status = ?
+                        AND broker_order_id IS NULL
+                        AND acknowledged_at IS NULL
+                        AND recovered_at IS NULL
+                    """,
+                    (
+                        EntryPlacementStatus
+                        .ACKNOWLEDGED.value,
+                        broker_order_id,
+                        recovered_at.isoformat(),
+                        recovered_at.isoformat(),
+                        ref_id,
+                        EntryPlacementStatus
+                        .UNCERTAIN.value,
+                    ),
+                )
+
+                if cursor.rowcount != 1:
+                    raise RuntimeError(
+                        "uncertain entry placement "
+                        "recovery failed"
+                    )
 
 
 def _decode_entry_placement_result(
