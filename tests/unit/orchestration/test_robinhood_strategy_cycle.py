@@ -176,6 +176,19 @@ def approved_review_payload(
         }
     }
 
+class NoopEntryRecoveryService:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def recover(
+        self,
+        *,
+        account_number: str,
+    ):
+        self.calls.append(
+            account_number
+        )
+        return []
 
 class FakeInvoker:
     def __init__(
@@ -346,6 +359,23 @@ class RecordingPlacer:
                 ),
             )
         )
+
+class RecordingActivationReconciler:
+    def __init__(
+        self,
+    ) -> None:
+        self.calls = []
+
+    def reconcile(
+        self,
+        *,
+        account_number: str,
+    ):
+        self.calls.append(
+            account_number
+        )
+
+        return ()
 
 class RobinhoodStrategyCycleTests(
     unittest.TestCase
@@ -1309,6 +1339,10 @@ class RobinhoodStrategyCycleTests(
 
         placer = RecordingPlacer()
 
+        reconciler = (
+            RecordingActivationReconciler()
+        )
+
         result = (
             run_robinhood_equity_strategy_cycle_from_store(
                 FakeInvoker(),
@@ -1330,6 +1364,12 @@ class RobinhoodStrategyCycleTests(
                     .LIVE
                 ),
                 placer=placer,
+                activation_reconciler=(
+                    reconciler
+                ),
+                entry_recovery_service=(
+                    NoopEntryRecoveryService()
+                ),
             )
         )
 
@@ -1358,6 +1398,13 @@ class RobinhoodStrategyCycleTests(
         self.assertEqual(
             result.placement_failure_count,
             0,
+        )
+
+        self.assertEqual(
+            reconciler.calls,
+            [
+                "agentic-account",
+            ],
         )
 
     def test_live_mode_requires_placer_for_approved_entry(
@@ -1395,7 +1442,344 @@ class RobinhoodStrategyCycleTests(
                     EquityEntryExecutionMode
                     .LIVE
                 ),
+                entry_recovery_service=(
+                    NoopEntryRecoveryService()
+                ),
+                activation_reconciler=(
+                    RecordingActivationReconciler()
+                ),
             )
+
+    def test_live_mode_requires_activation_reconciler(
+        self,
+    ) -> None:
+        class Store:
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                return []
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "requires activation reconciler",
+        ):
+            run_robinhood_equity_strategy_cycle_from_store(
+                FakeInvoker(),
+                Store(),
+                account_number=(
+                    "agentic-account"
+                ),
+                allowed_symbols=(
+                    "AAPL",
+                ),
+                universe_policy=(
+                    _UNIVERSE_POLICY
+                ),
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
+                execution_mode=(
+                    EquityEntryExecutionMode
+                    .LIVE
+                ),
+                entry_recovery_service=(
+                    NoopEntryRecoveryService()
+                ),
+                placer=RecordingPlacer(),
+            )
+
+    def test_live_reconciles_entry_before_loading_portfolio_risk(
+        self,
+    ) -> None:
+        from stock_agent.state import (
+            PositionRuntimeState,
+            PositionStateStatus,
+        )
+
+        events = []
+
+        activated = (
+            PositionRuntimeState(
+                position_id=(
+                    "agentic-account:"
+                    "equity:AAPL:"
+                    "broker-order-1"
+                ),
+                account_number=(
+                    "agentic-account"
+                ),
+                asset_type=(
+                    AssetType.EQUITY
+                ),
+                symbol="AAPL",
+                opening_order_id=(
+                    "broker-order-1"
+                ),
+                entry_price=Decimal(
+                    "100"
+                ),
+                remaining_quantity=Decimal(
+                    "0.05"
+                ),
+                opened_at=(
+                    _SESSION_START
+                ),
+                highest_executable_bid=Decimal(
+                    "100"
+                ),
+                trailing_armed=False,
+                trailing_armed_at=None,
+                activation_gain_ratio=Decimal(
+                    "0.04"
+                ),
+                drawdown_ratio=Decimal(
+                    "0.02"
+                ),
+                last_quote_at=(
+                    _SESSION_START
+                ),
+                last_reconciled_at=(
+                    _SESSION_START
+                ),
+                status=(
+                    PositionStateStatus.ACTIVE
+                ),
+            )
+        )
+
+        class Store:
+            def __init__(
+                self,
+            ) -> None:
+                self.states = []
+
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                events.append(
+                    "load_positions"
+                )
+
+                return [
+                    state
+                    for state in self.states
+                    if (
+                        state.account_number
+                        == account_number
+                        and state.status
+                        in statuses
+                    )
+                ]
+
+        class RecoveryService:
+            def recover(
+                self,
+                *,
+                account_number,
+            ):
+                events.append(
+                    "recover"
+                )
+                return []
+
+
+        class ActivationReconciler:
+            def __init__(
+                self,
+                store,
+            ) -> None:
+                self.store = store
+
+            def reconcile(
+                self,
+                *,
+                account_number,
+            ):
+                events.append(
+                    "activate"
+                )
+
+                self.store.states.append(
+                    activated
+                )
+
+                return (
+                    activated,
+                )
+
+        store = Store()
+
+        placer = RecordingPlacer()
+
+        result = (
+            run_robinhood_equity_strategy_cycle_from_store(
+                FakeInvoker(),
+                store,
+                account_number=(
+                    "agentic-account"
+                ),
+                allowed_symbols=(
+                    "AAPL",
+                ),
+                universe_policy=(
+                    _UNIVERSE_POLICY
+                ),
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
+                execution_mode=(
+                    EquityEntryExecutionMode
+                    .LIVE
+                ),
+                entry_recovery_service=(
+                    RecoveryService()
+                ),
+                activation_reconciler=(
+                    ActivationReconciler(
+                        store
+                    )
+                ),
+                placer=placer,
+            )
+        )
+
+
+        self.assertEqual(
+            result.eligible_entry_count,
+            0,
+        )
+
+        self.assertEqual(
+            placer.calls,
+            [],
+        )
+
+        self.assertEqual(
+            events,
+            [
+                "recover",
+                "activate",
+                "load_positions",
+            ],
+        )
+
+    def test_live_mode_requires_entry_recovery_service(
+        self,
+    ) -> None:
+        class Store:
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                return []
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "requires entry recovery service",
+        ):
+            run_robinhood_equity_strategy_cycle_from_store(
+                FakeInvoker(),
+                Store(),
+                account_number="agentic-account",
+                allowed_symbols=("AAPL",),
+                universe_policy=_UNIVERSE_POLICY,
+                evaluated_at=_EVALUATED_AT,
+                execution_mode=(
+                    EquityEntryExecutionMode.LIVE
+                ),
+                placer=RecordingPlacer(),
+                activation_reconciler=(
+                    RecordingActivationReconciler()
+                ),
+            )
+
+    def test_live_mode_blocks_when_entry_recovery_is_unresolved(
+        self,
+    ) -> None:
+        events = []
+
+        class RecoveryResult:
+            recovered = False
+
+        class RecoveryService:
+            def recover(
+                self,
+                *,
+                account_number,
+            ):
+                events.append(
+                    "recover"
+                )
+                return [
+                    RecoveryResult()
+                ]
+
+        class ActivationReconciler:
+            def reconcile(
+                self,
+                *,
+                account_number,
+            ):
+                events.append(
+                    "activate"
+                )
+                raise AssertionError(
+                    "activation must not run "
+                    "after unresolved recovery"
+                )
+
+        class Store:
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                events.append(
+                    "load_positions"
+                )
+                raise AssertionError(
+                    "portfolio must not load "
+                    "after unresolved recovery"
+                )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "unresolved entry placement recovery",
+        ):
+            run_robinhood_equity_strategy_cycle_from_store(
+                FakeInvoker(),
+                Store(),
+                account_number="agentic-account",
+                allowed_symbols=("AAPL",),
+                universe_policy=_UNIVERSE_POLICY,
+                evaluated_at=_EVALUATED_AT,
+                execution_mode=(
+                    EquityEntryExecutionMode.LIVE
+                ),
+                placer=RecordingPlacer(),
+                entry_recovery_service=(
+                    RecoveryService()
+                ),
+                activation_reconciler=(
+                    ActivationReconciler()
+                ),
+            )
+
+        self.assertEqual(
+            events,
+            [
+                "recover",
+            ],
+        )
 
 
 if __name__ == "__main__":

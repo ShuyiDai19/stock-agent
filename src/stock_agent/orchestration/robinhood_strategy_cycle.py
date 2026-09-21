@@ -47,6 +47,12 @@ from stock_agent.orchestration.entry_placement_cycle import (
     EquityEntryPlacementCycleOutcome,
     execute_approved_equity_entries,
 )
+from stock_agent.orchestration.entry_activation_reconciliation import (
+    EquityEntryActivationReconciler,
+)
+from stock_agent.brokers.robinhood.entry_placement_recovery import (
+    EquityEntryPlacementRecoveryService,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -440,6 +446,14 @@ def run_robinhood_equity_strategy_cycle_from_store(
         ApprovedEquityEntryPlacer
         | None
     ) = None,
+    entry_recovery_service: (
+        EquityEntryPlacementRecoveryService
+        | None
+    ) = None,
+    activation_reconciler: (
+        EquityEntryActivationReconciler
+        | None
+    ) = None,
 ) -> RobinhoodEquityCycleRunOutcome:
     resolver = (
         XnysRegularMarketSessionResolver()
@@ -464,6 +478,41 @@ def run_robinhood_equity_strategy_cycle_from_store(
                     f"is {session.status.value}"
                 ),
             )
+        )
+    
+    if (
+        execution_mode
+        is EquityEntryExecutionMode.LIVE
+    ):
+        if entry_recovery_service is None:
+            raise ValueError(
+                "live entry execution requires "
+                "entry recovery service"
+            )
+
+        if activation_reconciler is None:
+            raise ValueError(
+                "live entry execution requires "
+                "activation reconciler"
+            )
+
+        recovery_results = (
+            entry_recovery_service.recover(
+                account_number=account_number
+            )
+        )
+
+        if any(
+            not result.recovered
+            for result in recovery_results
+        ):
+            raise RuntimeError(
+                "live entry execution blocked by "
+                "unresolved entry placement recovery"
+            )
+
+        activation_reconciler.reconcile(
+            account_number=account_number
         )
 
     universe = (
