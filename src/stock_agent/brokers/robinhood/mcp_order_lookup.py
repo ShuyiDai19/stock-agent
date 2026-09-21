@@ -7,18 +7,16 @@ from stock_agent.brokers.robinhood.mcp_mapping import (
     RobinhoodMCPToolCall,
 )
 from stock_agent.brokers.robinhood.reconciler import (
+    RobinhoodOrderLookupRequest,
     RobinhoodOrderLookupResult,
     RobinhoodOrderLookupStatus,
-)
-from stock_agent.brokers.robinhood.reconciliation import (
-    PlacementReconciliationRequest,
 )
 from stock_agent.domain import AssetType
 from urllib.parse import parse_qs, urlsplit
 
 
 def build_robinhood_mcp_order_lookup_call(
-    request: PlacementReconciliationRequest,
+    request: RobinhoodOrderLookupRequest,
 ) -> RobinhoodMCPToolCall:
     if request.asset_type is AssetType.EQUITY:
         return RobinhoodMCPToolCall(
@@ -94,7 +92,7 @@ def _extract_next_cursor(
     return cursors[0]
 
 def decode_robinhood_mcp_order_lookup(
-    request: PlacementReconciliationRequest,
+    request: RobinhoodOrderLookupRequest,
     raw_result: Any,
 ) -> RobinhoodOrderLookupResult:
     if not isinstance(raw_result, dict):
@@ -180,7 +178,7 @@ class MCPRobinhoodOrderLookup:
 
     def lookup(
         self,
-        request: PlacementReconciliationRequest,
+        request: RobinhoodOrderLookupRequest,
     ) -> RobinhoodOrderLookupResult:
         call = build_robinhood_mcp_order_lookup_call(
             request

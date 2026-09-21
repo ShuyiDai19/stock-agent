@@ -69,6 +69,7 @@ from stock_agent.brokers.robinhood.reconciliation import (
 from stock_agent.brokers.robinhood.reconciler import (
     PlacementReconciler,
     RobinhoodOrderLookup,
+    RobinhoodOrderLookupRequest,
     RobinhoodOrderLookupResult,
     RobinhoodOrderLookupStatus,
     RobinhoodPlacementReconciler,
@@ -152,6 +153,7 @@ __all__ = [
     "PlacementReconciliationStatus",
     "PlacementReconciler",
     "RobinhoodOrderLookup",
+    "RobinhoodOrderLookupRequest",
     "RobinhoodOrderLookupResult",
     "RobinhoodOrderLookupStatus",
     "RobinhoodPlacementReconciler",

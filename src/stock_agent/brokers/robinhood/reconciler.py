@@ -4,18 +4,78 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Protocol
 
+from stock_agent.domain import AssetType
+
 from stock_agent.brokers.robinhood.reconciliation import (
     PlacementReconciliationOutcome,
     PlacementReconciliationRequest,
     PlacementReconciliationStatus,
 )
 
+@dataclass(frozen=True)
+class RobinhoodOrderLookupRequest:
+    account_number: str
+    asset_type: AssetType
+    symbol: str
+    ref_id: str
+    option_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.account_number.strip():
+            raise ValueError(
+                "account_number cannot be empty"
+            )
+
+        if not self.symbol.strip():
+            raise ValueError(
+                "symbol cannot be empty"
+            )
+
+        if not self.ref_id.strip():
+            raise ValueError(
+                "ref_id cannot be empty"
+            )
+
+        if (
+            self.asset_type
+            is AssetType.EQUITY
+            and self.option_id is not None
+        ):
+            raise ValueError(
+                "equity lookup cannot "
+                "contain option_id"
+            )
+
+        if (
+            self.asset_type
+            is AssetType.OPTION
+        ):
+            if (
+                self.option_id is None
+                or not self.option_id.strip()
+            ):
+                raise ValueError(
+                    "option lookup requires "
+                    "option_id"
+                )
 
 class RobinhoodOrderLookupStatus(str, Enum):
     FOUND = "found"
     NOT_FOUND = "not_found"
     UNKNOWN = "unknown"
 
+def build_robinhood_order_lookup_request(
+    request: PlacementReconciliationRequest,
+) -> RobinhoodOrderLookupRequest:
+    return RobinhoodOrderLookupRequest(
+        account_number=(
+            request.account_number
+        ),
+        asset_type=request.asset_type,
+        symbol=request.symbol,
+        ref_id=request.ref_id,
+        option_id=request.option_id,
+    )
 
 @dataclass(frozen=True)
 class RobinhoodOrderLookupResult:
@@ -49,7 +109,7 @@ class RobinhoodOrderLookupResult:
 class RobinhoodOrderLookup(Protocol):
     def lookup(
         self,
-        request: PlacementReconciliationRequest,
+        request: RobinhoodOrderLookupRequest,
     ) -> RobinhoodOrderLookupResult:
         ...
 
@@ -85,8 +145,14 @@ class RobinhoodPlacementReconciler:
         self,
         request: PlacementReconciliationRequest,
     ) -> PlacementReconciliationOutcome:
+        lookup_request = (
+            build_robinhood_order_lookup_request(
+                request
+            )
+        )
+
         result = self._lookup.lookup(
-            request
+            lookup_request
         )
 
         checked_at = self._clock()

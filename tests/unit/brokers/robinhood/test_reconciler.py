@@ -8,6 +8,7 @@ from stock_agent.brokers.robinhood import (
     RobinhoodOrderLookupResult,
     RobinhoodOrderLookupStatus,
     RobinhoodPlacementReconciler,
+    RobinhoodOrderLookupRequest,
 )
 from stock_agent.domain import AssetType
 
@@ -23,7 +24,7 @@ class FakeRobinhoodOrderLookup:
 
     def lookup(
         self,
-        request: PlacementReconciliationRequest,
+        request: RobinhoodOrderLookupRequest,
     ) -> RobinhoodOrderLookupResult:
         self.call_count += 1
         self.received_request = request
@@ -91,7 +92,18 @@ class RobinhoodPlacementReconcilerTests(unittest.TestCase):
         outcome = reconciler.reconcile(request)
 
         self.assertEqual(lookup.call_count, 1)
-        self.assertEqual(lookup.received_request, request)
+        self.assertEqual(
+            lookup.received_request,
+            RobinhoodOrderLookupRequest(
+                account_number=(
+                    request.account_number
+                ),
+                asset_type=request.asset_type,
+                symbol=request.symbol,
+                ref_id=request.ref_id,
+                option_id=request.option_id,
+            ),
+        )
         self.assertEqual(
             outcome.status,
             PlacementReconciliationStatus.FOUND,

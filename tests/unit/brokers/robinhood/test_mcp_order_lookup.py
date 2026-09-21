@@ -4,7 +4,7 @@ from typing import Any
 
 from stock_agent.brokers.robinhood import (
     MCPRobinhoodOrderLookup,
-    PlacementReconciliationRequest,
+    RobinhoodOrderLookupRequest,
     RobinhoodOrderLookupStatus,
     build_robinhood_mcp_order_lookup_call,
     decode_robinhood_mcp_order_lookup,
@@ -69,22 +69,13 @@ class MCPRobinhoodOrderLookupTests(
 
     def make_equity_request(
         self,
-    ) -> PlacementReconciliationRequest:
-        return PlacementReconciliationRequest(
-            position_id="position-123",
+    ) -> RobinhoodOrderLookupRequest:
+        return RobinhoodOrderLookupRequest(
             account_number="account-0000",
             asset_type=AssetType.EQUITY,
             symbol="AAPL",
             ref_id=self.REF_ID,
             option_id=None,
-            placement_attempted_at=datetime(
-                2026,
-                9,
-                2,
-                4,
-                40,
-                tzinfo=timezone.utc,
-            ),
         )
 
     def test_builds_equity_lookup_call(
@@ -230,20 +221,11 @@ class MCPRobinhoodOrderLookupTests(
     def test_builds_option_lookup_call(
         self,
     ) -> None:
-        request = PlacementReconciliationRequest(
-            position_id="position-456",
+        request = RobinhoodOrderLookupRequest(
             account_number="account-0000",
             asset_type=AssetType.OPTION,
             symbol="AAPL",
             ref_id=self.REF_ID,
-            placement_attempted_at=datetime(
-                2026,
-                9,
-                2,
-                4,
-                40,
-                tzinfo=timezone.utc,
-            ),
             option_id="option-contract-123",
         )
 
