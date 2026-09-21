@@ -349,6 +349,34 @@ class EntryFillTests(
                 ref_id=_REF_ID,
             )
 
+    def test_filled_order_rejects_invalid_cumulative_quantity(
+        self,
+    ) -> None:
+        order_result = filled_order()
+
+        order_result[
+            "data"
+        ][
+            "orders"
+        ][0][
+            "cumulative_quantity"
+        ] = "0"
+
+        with self.assertRaises(
+            ValueError
+        ):
+            decode_confirmed_equity_entry_fill(
+                order_result,
+                account_number=(
+                    "agentic-account"
+                ),
+                symbol="AAPL",
+                broker_order_id=(
+                    "broker-order-1"
+                ),
+                ref_id=_REF_ID,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,9 @@ from stock_agent.brokers.robinhood.entry_placement import (
     EntryPlacementStatus,
     SQLiteEquityEntryPlacementJournal,
 )
+from stock_agent.brokers.robinhood.order_execution_decoder import (
+    decode_robinhood_filled_order,
+)
 
 
 class EquityEntryQuoteProvider(Protocol):
@@ -162,23 +165,18 @@ def decode_confirmed_equity_entry_fill(
             "must be a mapping"
         )
 
-    if (
-        order.get("id")
-        != broker_order_id
-    ):
-        raise ValueError(
-            "Robinhood equity order id "
-            "does not match expected order"
+    execution = (
+        decode_robinhood_filled_order(
+            order,
+            expected_broker_order_id=(
+                broker_order_id
+            ),
+            expected_ref_id=ref_id,
         )
+    )
 
-    if (
-        order.get("ref_id")
-        != ref_id
-    ):
-        raise ValueError(
-            "Robinhood equity order ref_id "
-            "does not match expected placement"
-        )
+    if execution is None:
+        return None
 
     if (
         order.get("symbol")
@@ -193,20 +191,6 @@ def decode_confirmed_equity_entry_fill(
         raise ValueError(
             "opening equity order must be buy"
         )
-
-    if order.get("state") != "filled":
-        return None
-
-    filled_quantity = (
-        _parse_positive_decimal(
-            order.get(
-                "cumulative_quantity"
-            ),
-            field_name=(
-                "cumulative_quantity"
-            ),
-        )
-    )
 
     average_fill_price = (
         _parse_positive_decimal(
@@ -236,7 +220,7 @@ def decode_confirmed_equity_entry_fill(
         ),
         ref_id=ref_id,
         filled_quantity=(
-            filled_quantity
+            execution.filled_quantity
         ),
         average_fill_price=(
             average_fill_price
