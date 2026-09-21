@@ -19,6 +19,13 @@ from stock_agent.orchestration.robinhood_strategy_cycle import (
 from stock_agent.strategy.market_session import (
     RegularMarketSessionStatus,
 )
+from stock_agent.strategy.universe import (
+    EquityUniverseScreeningPolicy,
+)
+from stock_agent.orchestration.entry_placement_cycle import (
+    EquityEntryExecutionMode,
+    EquityEntryPlacementStatus,
+)
 
 
 _SESSION_START = datetime(
@@ -37,6 +44,17 @@ _EVALUATED_AT = datetime(
     13,
     47,
     tzinfo=timezone.utc,
+)
+
+_UNIVERSE_POLICY = (
+    EquityUniverseScreeningPolicy(
+        min_average_volume_30d=Decimal(
+            "1000000"
+        ),
+        min_market_cap=Decimal(
+            "1000000000"
+        ),
+    )
 )
 
 
@@ -189,6 +207,32 @@ class FakeInvoker:
                 dict(arguments),
             )
         )
+        if (
+            tool_name
+            == "get_equity_fundamentals"
+        ):
+            symbols = arguments[
+                "symbols"
+            ]
+
+            return {
+                "data": {
+                    "results": [
+                        {
+                            "symbol": symbol,
+                            "average_volume_30_days": (
+                                "5000000"
+                            ),
+                            "market_cap": (
+                                "10000000000"
+                            ),
+                        }
+                        for symbol in symbols
+                    ],
+                    "not_found": [],
+                }
+            }
+
 
         if (
             tool_name
@@ -251,6 +295,57 @@ class FakeInvoker:
             f"unexpected tool: {tool_name}"
         )
 
+class ExplodingPlacer:
+    def place(
+        self,
+        item,
+        *,
+        account_number,
+        attempted_at,
+    ):
+        raise AssertionError(
+            "default REVIEW_ONLY mode "
+            "must not call placer"
+        )
+
+class RecordingPlacer:
+    def __init__(
+        self,
+    ) -> None:
+        self.calls = []
+
+    def place(
+        self,
+        item,
+        *,
+        account_number,
+        attempted_at,
+    ):
+        from stock_agent.brokers.robinhood.entry_placement import (
+            RobinhoodEquityEntryPlacementResult,
+        )
+
+        self.calls.append(
+            (
+                item.symbol,
+                account_number,
+                attempted_at,
+            )
+        )
+
+        return (
+            RobinhoodEquityEntryPlacementResult(
+                ref_id=(
+                    f"ref-{item.symbol}"
+                ),
+                broker_order_id=(
+                    f"order-{item.symbol}"
+                ),
+                submitted_at=(
+                    attempted_at
+                ),
+            )
+        )
 
 class RobinhoodStrategyCycleTests(
     unittest.TestCase
@@ -637,9 +732,18 @@ class RobinhoodStrategyCycleTests(
             run_robinhood_equity_strategy_cycle_from_store(
                 invoker,
                 Store(),
-                account_number="agentic-account",
-                symbols=("AAPL",),
-                evaluated_at=_EVALUATED_AT,
+                account_number=(
+                    "agentic-account"
+                ),
+                allowed_symbols=(
+                    "AAPL",
+                ),
+                universe_policy=(
+                    _UNIVERSE_POLICY
+                ),
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
             )
         )
 
@@ -699,9 +803,12 @@ class RobinhoodStrategyCycleTests(
                 account_number=(
                     "agentic-account"
                 ),
-                symbols=(
+                allowed_symbols=(
                     "AAPL",
                     "MSFT",
+                ),
+                universe_policy=(
+                    _UNIVERSE_POLICY
                 ),
                 evaluated_at=(
                     datetime(
@@ -742,6 +849,553 @@ class RobinhoodStrategyCycleTests(
             invoker.calls,
             [],
         )
+
+    def test_from_store_runs_universe_before_candidate_pipeline(
+        self,
+    ) -> None:
+        class Store:
+            def __init__(
+                self,
+            ) -> None:
+                self.calls = 0
+
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                self.calls += 1
+
+                return []
+
+        invoker = FakeInvoker()
+        store = Store()
+
+        result = (
+            run_robinhood_equity_strategy_cycle_from_store(
+                invoker,
+                store,
+                account_number=(
+                    "agentic-account"
+                ),
+                allowed_symbols=(
+                    "AAPL",
+                ),
+                universe_policy=(
+                    _UNIVERSE_POLICY
+                ),
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
+            )
+        )
+
+        self.assertEqual(
+            result.status,
+            RobinhoodEquityCycleRunStatus
+            .RAN,
+        )
+
+        self.assertEqual(
+            result.universe_eligible_symbols,
+            (
+                "AAPL",
+            ),
+        )
+
+        self.assertEqual(
+            result.universe_error_count,
+            0,
+        )
+
+        self.assertEqual(
+            result.universe_rejected_count,
+            0,
+        )
+
+        self.assertEqual(
+            store.calls,
+            1,
+        )
+
+        self.assertEqual(
+            [
+                call[0]
+                for call in invoker.calls
+            ],
+            [
+                "get_equity_fundamentals",
+                "get_equity_quotes",
+                "get_equity_historicals",
+                "review_equity_order",
+            ],
+        )
+
+        self.assertEqual(
+            result.execution_mode,
+            EquityEntryExecutionMode
+            .REVIEW_ONLY,
+        )
+
+        self.assertEqual(
+            result.placement_count,
+            0,
+        )
+
+        self.assertEqual(
+            result.placement_failure_count,
+            0,
+        )
+
+        self.assertEqual(
+            result.placement_blocked_count,
+            0,
+        )
+
+    def test_empty_screened_universe_returns_no_trade_without_candidate_reads(
+        self,
+    ) -> None:
+        class UniverseRejectingInvoker:
+            def __init__(
+                self,
+            ) -> None:
+                self.calls = []
+
+            def call_tool(
+                self,
+                tool_name,
+                arguments,
+            ):
+                self.calls.append(
+                    (
+                        tool_name,
+                        dict(arguments),
+                    )
+                )
+
+                if (
+                    tool_name
+                    != "get_equity_fundamentals"
+                ):
+                    raise AssertionError(
+                        "candidate pipeline "
+                        "must not run"
+                    )
+
+                return {
+                    "data": {
+                        "results": [
+                            {
+                                "symbol": symbol,
+                                "average_volume_30_days": (
+                                    "100"
+                                ),
+                                "market_cap": (
+                                    "100"
+                                ),
+                            }
+                            for symbol
+                            in arguments[
+                                "symbols"
+                            ]
+                        ],
+                        "not_found": [],
+                    }
+                }
+
+        class Store:
+            def __init__(
+                self,
+            ) -> None:
+                self.calls = 0
+
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                self.calls += 1
+
+                raise AssertionError(
+                    "position store must not "
+                    "be read when universe "
+                    "is empty"
+                )
+
+        invoker = (
+            UniverseRejectingInvoker()
+        )
+
+        store = Store()
+
+        result = (
+            run_robinhood_equity_strategy_cycle_from_store(
+                invoker,
+                store,
+                account_number=(
+                    "agentic-account"
+                ),
+                allowed_symbols=(
+                    "AAPL",
+                    "MSFT",
+                ),
+                universe_policy=(
+                    _UNIVERSE_POLICY
+                ),
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
+            )
+        )
+
+        self.assertEqual(
+            result.status,
+            RobinhoodEquityCycleRunStatus
+            .NO_TRADE,
+        )
+
+        self.assertEqual(
+            result.universe_eligible_symbols,
+            (),
+        )
+
+        self.assertEqual(
+            result.universe_rejected_count,
+            2,
+        )
+
+        self.assertEqual(
+            result.universe_error_count,
+            0,
+        )
+
+        self.assertEqual(
+            result.eligible_entry_count,
+            0,
+        )
+
+        self.assertEqual(
+            store.calls,
+            0,
+        )
+
+        self.assertEqual(
+            [
+                call[0]
+                for call in invoker.calls
+            ],
+            [
+                "get_equity_fundamentals",
+            ],
+        )
+
+    def test_only_selected_universe_symbols_enter_intraday_pipeline(
+        self,
+    ) -> None:
+        class RankedUniverseInvoker(
+            FakeInvoker
+        ):
+            def call_tool(
+                self,
+                tool_name,
+                arguments,
+            ):
+                if (
+                    tool_name
+                    == "get_equity_fundamentals"
+                ):
+                    self.calls.append(
+                        (
+                            tool_name,
+                            dict(arguments),
+                        )
+                    )
+
+                    volumes = {
+                        "AAPL": "5000000",
+                        "MSFT": "9000000",
+                        "NVDA": "7000000",
+                    }
+
+                    return {
+                        "data": {
+                            "results": [
+                                {
+                                    "symbol": symbol,
+                                    "average_volume_30_days": (
+                                        volumes[
+                                            symbol
+                                        ]
+                                    ),
+                                    "market_cap": (
+                                        "10000000000"
+                                    ),
+                                }
+                                for symbol
+                                in arguments[
+                                    "symbols"
+                                ]
+                            ],
+                            "not_found": [],
+                        }
+                    }
+
+                return super().call_tool(
+                    tool_name,
+                    arguments,
+                )
+
+        class Store:
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                return []
+
+        policy = (
+            EquityUniverseScreeningPolicy(
+                min_average_volume_30d=(
+                    Decimal("1000000")
+                ),
+                min_market_cap=(
+                    Decimal("1000000000")
+                ),
+                max_intraday_candidates=2,
+            )
+        )
+
+        invoker = (
+            RankedUniverseInvoker()
+        )
+
+        result = (
+            run_robinhood_equity_strategy_cycle_from_store(
+                invoker,
+                Store(),
+                account_number=(
+                    "agentic-account"
+                ),
+                allowed_symbols=(
+                    "AAPL",
+                    "MSFT",
+                    "NVDA",
+                ),
+                universe_policy=policy,
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
+            )
+        )
+
+        self.assertEqual(
+            result.universe_eligible_symbols,
+            (
+                "AAPL",
+                "MSFT",
+                "NVDA",
+            ),
+        )
+
+        self.assertEqual(
+            result.universe_selected_symbols,
+            (
+                "MSFT",
+                "NVDA",
+            ),
+        )
+
+        self.assertEqual(
+            result.universe_deferred_count,
+            1,
+        )
+
+        market_data_symbols = []
+
+        for (
+            tool_name,
+            arguments,
+        ) in invoker.calls:
+            if tool_name in {
+                "get_equity_quotes",
+                "get_equity_historicals",
+            }:
+                market_data_symbols.extend(
+                    arguments[
+                        "symbols"
+                    ]
+                )
+
+        self.assertNotIn(
+            "AAPL",
+            market_data_symbols,
+        )
+
+        self.assertIn(
+            "MSFT",
+            market_data_symbols,
+        )
+
+        self.assertIn(
+            "NVDA",
+            market_data_symbols,
+        )
+
+    def test_from_store_defaults_to_review_only(
+        self,
+    ) -> None:
+        class Store:
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                return []
+
+        result = (
+            run_robinhood_equity_strategy_cycle_from_store(
+                FakeInvoker(),
+                Store(),
+                account_number=(
+                    "agentic-account"
+                ),
+                allowed_symbols=(
+                    "AAPL",
+                ),
+                universe_policy=(
+                    _UNIVERSE_POLICY
+                ),
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
+                placer=(
+                    ExplodingPlacer()
+                ),
+            )
+        )
+
+        self.assertEqual(
+            result.status,
+            RobinhoodEquityCycleRunStatus
+            .RAN,
+        )
+
+        self.assertEqual(
+            result.execution_mode,
+            EquityEntryExecutionMode
+            .REVIEW_ONLY,
+        )
+
+        self.assertEqual(
+            result.placement_count,
+            0,
+        )
+
+    def test_from_store_live_mode_executes_approved_entry(
+        self,
+    ) -> None:
+        class Store:
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                return []
+
+        placer = RecordingPlacer()
+
+        result = (
+            run_robinhood_equity_strategy_cycle_from_store(
+                FakeInvoker(),
+                Store(),
+                account_number=(
+                    "agentic-account"
+                ),
+                allowed_symbols=(
+                    "AAPL",
+                ),
+                universe_policy=(
+                    _UNIVERSE_POLICY
+                ),
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
+                execution_mode=(
+                    EquityEntryExecutionMode
+                    .LIVE
+                ),
+                placer=placer,
+            )
+        )
+
+        self.assertEqual(
+            result.execution_mode,
+            EquityEntryExecutionMode
+            .LIVE,
+        )
+
+        self.assertEqual(
+            [
+                call[0]
+                for call
+                in placer.calls
+            ],
+            [
+                "AAPL",
+            ],
+        )
+
+        self.assertEqual(
+            result.placement_count,
+            1,
+        )
+
+        self.assertEqual(
+            result.placement_failure_count,
+            0,
+        )
+
+    def test_live_mode_requires_placer_for_approved_entry(
+        self,
+    ) -> None:
+        class Store:
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                return []
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "requires placer",
+        ):
+            run_robinhood_equity_strategy_cycle_from_store(
+                FakeInvoker(),
+                Store(),
+                account_number=(
+                    "agentic-account"
+                ),
+                allowed_symbols=(
+                    "AAPL",
+                ),
+                universe_policy=(
+                    _UNIVERSE_POLICY
+                ),
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
+                execution_mode=(
+                    EquityEntryExecutionMode
+                    .LIVE
+                ),
+            )
 
 
 if __name__ == "__main__":

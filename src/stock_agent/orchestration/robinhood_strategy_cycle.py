@@ -34,6 +34,19 @@ from stock_agent.strategy.market_session import (
     RegularMarketSession,
     XnysRegularMarketSessionResolver,
 )
+from stock_agent.orchestration.robinhood_universe import (
+    RobinhoodUniverseScreenOutcome,
+    load_and_screen_robinhood_equity_universe,
+)
+from stock_agent.strategy.universe import (
+    EquityUniverseScreeningPolicy,
+)
+from stock_agent.orchestration.entry_placement_cycle import (
+    ApprovedEquityEntryPlacer,
+    EquityEntryExecutionMode,
+    EquityEntryPlacementCycleOutcome,
+    execute_approved_equity_entries,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +146,16 @@ class RobinhoodEquityCycleRunOutcome:
         | None
     )
 
+    universe: (
+        RobinhoodUniverseScreenOutcome
+        | None
+    ) = None
+
+    execution: (
+        EquityEntryPlacementCycleOutcome
+        | None
+    ) = None
+
     reason: str | None = None
 
     def __post_init__(
@@ -148,6 +171,11 @@ class RobinhoodEquityCycleRunOutcome:
                     "RAN outcome requires cycle"
                 )
 
+            if self.execution is None:
+                raise ValueError(
+                    "RAN outcome requires execution"
+                )
+
             return
 
         if self.cycle is not None:
@@ -156,6 +184,12 @@ class RobinhoodEquityCycleRunOutcome:
                 "contain cycle"
             )
 
+        if self.execution is not None:
+            raise ValueError(
+                "NO_TRADE outcome cannot "
+                "contain execution"
+            )
+    
     @property
     def eligible_entries(
         self,
@@ -211,6 +245,115 @@ class RobinhoodEquityCycleRunOutcome:
             self.cycle
             .review_error_count
         )
+
+    @property
+    def universe_eligible_symbols(
+        self,
+    ) -> tuple[
+        str,
+        ...,
+    ]:
+        if self.universe is None:
+            return ()
+
+        return (
+            self.universe
+            .eligible_symbols
+        )
+
+
+    @property
+    def universe_selected_symbols(
+        self,
+    ) -> tuple[
+        str,
+        ...,
+    ]:
+        if self.universe is None:
+            return ()
+
+        return (
+            self.universe
+            .selected_symbols
+        )
+
+
+    @property
+    def universe_error_count(
+        self,
+    ) -> int:
+        if self.universe is None:
+            return 0
+
+        return len(
+            self.universe
+            .load_errors
+        )
+
+
+    @property
+    def universe_rejected_count(
+        self,
+    ) -> int:
+        if self.universe is None:
+            return 0
+
+        return len(
+            self.universe
+            .rejected_items
+        )
+
+
+    @property
+    def universe_deferred_count(
+        self,
+    ) -> int:
+        if self.universe is None:
+            return 0
+
+        return len(
+            self.universe
+            .deferred_items
+        )
+
+    @property
+    def execution_mode(
+        self,
+    ) -> EquityEntryExecutionMode | None:
+        if self.execution is None:
+            return None
+
+        return self.execution.mode
+
+
+    @property
+    def placement_count(
+        self,
+    ) -> int:
+        if self.execution is None:
+            return 0
+
+        return self.execution.placed_count
+
+
+    @property
+    def placement_failure_count(
+        self,
+    ) -> int:
+        if self.execution is None:
+            return 0
+
+        return self.execution.failed_count
+
+
+    @property
+    def placement_blocked_count(
+        self,
+    ) -> int:
+        if self.execution is None:
+            return 0
+
+        return self.execution.blocked_count
 
 
 def run_robinhood_equity_strategy_cycle(
@@ -278,12 +421,25 @@ def run_robinhood_equity_strategy_cycle_from_store(
     store: PositionRiskStateStore,
     *,
     account_number: str,
-    symbols: tuple[
+    allowed_symbols: tuple[
         str,
         ...,
     ],
+    universe_policy: (
+        EquityUniverseScreeningPolicy
+    ),
     evaluated_at: datetime,
     budget: Decimal = DEFAULT_ENTRY_BUDGET,
+    execution_mode: (
+        EquityEntryExecutionMode
+    ) = (
+        EquityEntryExecutionMode
+        .REVIEW_ONLY
+    ),
+    placer: (
+        ApprovedEquityEntryPlacer
+        | None
+    ) = None,
 ) -> RobinhoodEquityCycleRunOutcome:
     resolver = (
         XnysRegularMarketSessionResolver()
@@ -302,9 +458,35 @@ def run_robinhood_equity_strategy_cycle_from_store(
                 ),
                 session=session,
                 cycle=None,
+                universe=None,
                 reason=(
                     "regular market session "
                     f"is {session.status.value}"
+                ),
+            )
+        )
+
+    universe = (
+        load_and_screen_robinhood_equity_universe(
+            invoker,
+            symbols=allowed_symbols,
+            policy=universe_policy,
+        )
+    )
+
+    if not universe.selected_symbols:
+        return (
+            RobinhoodEquityCycleRunOutcome(
+                status=(
+                    RobinhoodEquityCycleRunStatus
+                    .NO_TRADE
+                ),
+                session=session,
+                cycle=None,
+                universe=universe,
+                reason=(
+                    "universe screening produced "
+                    "no eligible symbols"
                 ),
             )
         )
@@ -324,7 +506,10 @@ def run_robinhood_equity_strategy_cycle_from_store(
             account_number=(
                 account_number
             ),
-            symbols=symbols,
+            symbols=(
+                universe
+                .selected_symbols
+            ),
             open_positions=(
                 open_positions
             ),
@@ -338,6 +523,20 @@ def run_robinhood_equity_strategy_cycle_from_store(
         )
     )
 
+    execution = (
+        execute_approved_equity_entries(
+            cycle.strategy.review_batch.items,
+            mode=execution_mode,
+            account_number=(
+                account_number
+            ),
+            attempted_at=(
+                evaluated_at
+            ),
+            placer=placer,
+        )
+    )
+
     return (
         RobinhoodEquityCycleRunOutcome(
             status=(
@@ -346,5 +545,7 @@ def run_robinhood_equity_strategy_cycle_from_store(
             ),
             session=session,
             cycle=cycle,
+            universe=universe,
+            execution=execution,
         )
     )

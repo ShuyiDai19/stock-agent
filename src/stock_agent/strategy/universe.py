@@ -20,6 +20,10 @@ class EquityUniverseScreeningPolicy:
     min_average_volume_30d: Decimal
     min_market_cap: Decimal
 
+    max_intraday_candidates: (
+        int | None
+    ) = None
+
     def __post_init__(
         self,
     ) -> None:
@@ -41,6 +45,30 @@ class EquityUniverseScreeningPolicy:
             if value < 0:
                 raise ValueError(
                     f"{field_name} cannot be negative"
+                )
+
+        if (
+            self.max_intraday_candidates
+            is not None
+        ):
+            if (
+                type(
+                    self.max_intraday_candidates
+                )
+                is not int
+            ):
+                raise ValueError(
+                    "max_intraday_candidates "
+                    "must be an integer"
+                )
+
+            if (
+                self.max_intraday_candidates
+                <= 0
+            ):
+                raise ValueError(
+                    "max_intraday_candidates "
+                    "must be greater than zero"
                 )
 
 
@@ -112,6 +140,8 @@ class EquityUniverseScreenOutcome:
         ...,
     ]
 
+    policy: EquityUniverseScreeningPolicy
+
     @property
     def eligible_items(
         self,
@@ -145,11 +175,89 @@ class EquityUniverseScreenOutcome:
         str,
         ...,
     ]:
+        # Threshold-passing symbols.
+        # Preserve input order for auditability.
         return tuple(
             item.symbol
             for item in self.eligible_items
         )
 
+    @property
+    def ranked_eligible_items(
+        self,
+    ) -> tuple[
+        EquityUniverseScreenItem,
+        ...,
+    ]:
+        return tuple(
+            sorted(
+                self.eligible_items,
+                key=lambda item: (
+                    -item.snapshot
+                    .average_volume_30d,
+                    -item.snapshot
+                    .market_cap,
+                    item.symbol,
+                ),
+            )
+        )
+
+    @property
+    def selected_items(
+        self,
+    ) -> tuple[
+        EquityUniverseScreenItem,
+        ...,
+    ]:
+        limit = (
+            self.policy
+            .max_intraday_candidates
+        )
+
+        if limit is None:
+            return (
+                self.ranked_eligible_items
+            )
+
+        return (
+            self.ranked_eligible_items[
+                :limit
+            ]
+        )
+
+    @property
+    def selected_symbols(
+        self,
+    ) -> tuple[
+        str,
+        ...,
+    ]:
+        return tuple(
+            item.symbol
+            for item
+            in self.selected_items
+        )
+
+    @property
+    def deferred_items(
+        self,
+    ) -> tuple[
+        EquityUniverseScreenItem,
+        ...,
+    ]:
+        limit = (
+            self.policy
+            .max_intraday_candidates
+        )
+
+        if limit is None:
+            return ()
+
+        return (
+            self.ranked_eligible_items[
+                limit:
+            ]
+        )
 
 def screen_equity_universe(
     snapshots: tuple[
@@ -205,5 +313,6 @@ def screen_equity_universe(
     return EquityUniverseScreenOutcome(
         items=tuple(
             items
-        )
+        ),
+        policy=policy,
     )

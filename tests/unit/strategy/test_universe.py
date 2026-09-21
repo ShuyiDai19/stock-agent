@@ -245,6 +245,208 @@ class EquityUniverseTests(
                 policy=_POLICY,
             )
 
+    def test_selects_top_n_by_average_volume(
+        self,
+    ) -> None:
+        policy = (
+            EquityUniverseScreeningPolicy(
+                min_average_volume_30d=(
+                    Decimal("1000000")
+                ),
+                min_market_cap=(
+                    Decimal("1000000000")
+                ),
+                max_intraday_candidates=2,
+            )
+        )
+
+        result = (
+            screen_equity_universe(
+                (
+                    snapshot(
+                        "AAPL",
+                        average_volume_30d=(
+                            "5000000"
+                        ),
+                    ),
+                    snapshot(
+                        "MSFT",
+                        average_volume_30d=(
+                            "9000000"
+                        ),
+                    ),
+                    snapshot(
+                        "NVDA",
+                        average_volume_30d=(
+                            "7000000"
+                        ),
+                    ),
+                ),
+                policy=policy,
+            )
+        )
+
+        self.assertEqual(
+            result.eligible_symbols,
+            (
+                "AAPL",
+                "MSFT",
+                "NVDA",
+            ),
+        )
+
+        self.assertEqual(
+            result.selected_symbols,
+            (
+                "MSFT",
+                "NVDA",
+            ),
+        )
+
+        self.assertEqual(
+            [
+                item.symbol
+                for item
+                in result.deferred_items
+            ],
+            [
+                "AAPL",
+            ],
+        )
+
+    def test_market_cap_breaks_volume_tie(
+        self,
+    ) -> None:
+        policy = (
+            EquityUniverseScreeningPolicy(
+                min_average_volume_30d=(
+                    Decimal("0")
+                ),
+                min_market_cap=(
+                    Decimal("0")
+                ),
+                max_intraday_candidates=2,
+            )
+        )
+
+        result = (
+            screen_equity_universe(
+                (
+                    snapshot(
+                        "AAPL",
+                        average_volume_30d=(
+                            "5000000"
+                        ),
+                        market_cap=(
+                            "10000000000"
+                        ),
+                    ),
+                    snapshot(
+                        "MSFT",
+                        average_volume_30d=(
+                            "5000000"
+                        ),
+                        market_cap=(
+                            "30000000000"
+                        ),
+                    ),
+                    snapshot(
+                        "NVDA",
+                        average_volume_30d=(
+                            "5000000"
+                        ),
+                        market_cap=(
+                            "20000000000"
+                        ),
+                    ),
+                ),
+                policy=policy,
+            )
+        )
+
+        self.assertEqual(
+            result.selected_symbols,
+            (
+                "MSFT",
+                "NVDA",
+            ),
+        )
+
+    def test_symbol_breaks_complete_ranking_tie(
+        self,
+    ) -> None:
+        policy = (
+            EquityUniverseScreeningPolicy(
+                min_average_volume_30d=(
+                    Decimal("0")
+                ),
+                min_market_cap=(
+                    Decimal("0")
+                ),
+                max_intraday_candidates=2,
+            )
+        )
+
+        result = (
+            screen_equity_universe(
+                (
+                    snapshot(
+                        "NVDA"
+                    ),
+                    snapshot(
+                        "MSFT"
+                    ),
+                    snapshot(
+                        "AAPL"
+                    ),
+                ),
+                policy=policy,
+            )
+        )
+
+        self.assertEqual(
+            result.selected_symbols,
+            (
+                "AAPL",
+                "MSFT",
+            ),
+        )
+
+    def test_rejects_nonpositive_max_intraday_candidates(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "greater than zero",
+        ):
+            EquityUniverseScreeningPolicy(
+                min_average_volume_30d=(
+                    Decimal("0")
+                ),
+                min_market_cap=(
+                    Decimal("0")
+                ),
+                max_intraday_candidates=0,
+            )
+
+
+    def test_rejects_boolean_max_intraday_candidates(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "must be an integer",
+        ):
+            EquityUniverseScreeningPolicy(
+                min_average_volume_30d=(
+                    Decimal("0")
+                ),
+                min_market_cap=(
+                    Decimal("0")
+                ),
+                max_intraday_candidates=True,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
