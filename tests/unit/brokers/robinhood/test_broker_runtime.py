@@ -14,6 +14,10 @@ from stock_agent.brokers.robinhood.broker_runtime import (
     run_robinhood_startup_recovery,
     RobinhoodStartupRecoverySummary,
     open_robinhood_runtime,
+    build_production_entry_placement_journal,
+    build_production_position_state_store,
+    resolve_entry_placement_journal_path,
+    resolve_position_state_path,
 )
 from stock_agent.brokers.robinhood.errors import (
     LiveExecutionDisabledError,
@@ -1066,3 +1070,329 @@ class RobinhoodBrokerRuntimeTests(
                 clients[0].calls,
                 [],
             )
+
+    def test_default_entry_placement_journal_path(
+        self,
+    ) -> None:
+        base_dir = Path("/project")
+
+        self.assertEqual(
+            resolve_entry_placement_journal_path(
+                {},
+                base_dir=base_dir,
+            ),
+            (
+                base_dir
+                / ".state"
+                / "robinhood"
+                / "entry-placement.sqlite3"
+            ),
+        )
+
+    def test_default_position_state_path(
+        self,
+    ) -> None:
+        base_dir = Path("/project")
+
+        self.assertEqual(
+            resolve_position_state_path(
+                {},
+                base_dir=base_dir,
+            ),
+            (
+                base_dir
+                / ".state"
+                / "robinhood"
+                / "positions.sqlite3"
+            ),
+        )
+
+    def test_build_production_entry_placement_journal_initializes_database(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base_dir = Path(directory)
+
+            journal = (
+                build_production_entry_placement_journal(
+                    {},
+                    base_dir=base_dir,
+                )
+            )
+
+            expected_path = (
+                base_dir
+                / ".state"
+                / "robinhood"
+                / "entry-placement.sqlite3"
+            )
+
+            self.assertTrue(
+                expected_path.exists()
+            )
+
+            self.assertEqual(
+                journal.list_uncertain(
+                    account_number="agentic-account"
+                ),
+                [],
+            )
+
+    def test_build_production_position_state_store_initializes_database(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base_dir = Path(directory)
+
+            store = (
+                build_production_position_state_store(
+                    {},
+                    base_dir=base_dir,
+                )
+            )
+
+            expected_path = (
+                base_dir
+                / ".state"
+                / "robinhood"
+                / "positions.sqlite3"
+            )
+
+            self.assertTrue(
+                expected_path.exists()
+            )
+
+            self.assertEqual(
+                store.list_by_status(
+                    account_number=(
+                        "agentic-account"
+                    ),
+                    statuses=(),
+                ),
+                [],
+            )
+
+    def test_empty_entry_placement_journal_path_is_rejected(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "ROBINHOOD_ENTRY_PLACEMENT_JOURNAL_PATH",
+        ):
+            resolve_entry_placement_journal_path(
+                {
+                    "ROBINHOOD_ENTRY_PLACEMENT_JOURNAL_PATH":
+                        "   ",
+                }
+            )
+
+    def test_empty_position_state_path_is_rejected(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "ROBINHOOD_POSITION_STATE_PATH",
+        ):
+            resolve_position_state_path(
+                {
+                    "ROBINHOOD_POSITION_STATE_PATH":
+                        "   ",
+                }
+            )
+
+    def test_runtime_builds_entry_components_in_safe_mode(
+        self,
+    ) -> None:
+        clients = []
+
+        def factory(server):
+            client = FakeMCPClient(
+                server
+            )
+            clients.append(client)
+            return client
+
+        with tempfile.TemporaryDirectory() as directory:
+            base_dir = Path(directory)
+
+            with open_robinhood_runtime(
+                account_number=(
+                    "agentic-account"
+                ),
+                not_found_grace_period=(
+                    timedelta(0)
+                ),
+                env={},
+                base_dir=base_dir,
+                client_factory=factory,
+            ) as runtime:
+                self.assertIsNotNone(
+                    runtime.entry_placement_journal
+                )
+
+                self.assertIsNotNone(
+                    runtime.position_store
+                )
+
+                self.assertIsNotNone(
+                    runtime.entry_recovery_service
+                )
+
+                self.assertIsNotNone(
+                    runtime.entry_activation_reconciler
+                )
+
+                # Critical safety invariant:
+                # safe runtime exposes no live placer.
+                self.assertIsNone(
+                    runtime.entry_placer
+                )
+
+                self.assertFalse(
+                    runtime.live_execution_enabled
+                )
+
+            self.assertTrue(
+                (
+                    base_dir
+                    / ".state"
+                    / "robinhood"
+                    / "entry-placement.sqlite3"
+                ).exists()
+            )
+
+            self.assertTrue(
+                (
+                    base_dir
+                    / ".state"
+                    / "robinhood"
+                    / "positions.sqlite3"
+                ).exists()
+            )
+
+    def test_runtime_exposes_entry_placer_when_live_is_enabled(
+        self,
+    ) -> None:
+        def factory(server):
+            return FakeMCPClient(
+                server
+            )
+
+        with tempfile.TemporaryDirectory() as directory:
+            with open_robinhood_runtime(
+                account_number=(
+                    "agentic-account"
+                ),
+                not_found_grace_period=(
+                    timedelta(0)
+                ),
+                env={
+                    "ROBINHOOD_LIVE_EXECUTION_ENABLED":
+                        "true",
+                    "STOCK_AGENT_RUNTIME_MODE":
+                        "live",
+                },
+                base_dir=Path(directory),
+                client_factory=factory,
+            ) as runtime:
+                self.assertTrue(
+                    runtime.live_execution_requested
+                )
+
+                self.assertTrue(
+                    runtime.live_execution_enabled
+                )
+
+                self.assertIsNotNone(
+                    runtime.entry_placer
+                )
+
+                self.assertEqual(
+                    runtime.account_number,
+                    "agentic-account",
+                )
+
+    def test_runtime_does_not_expose_entry_placer_when_exit_recovery_is_unresolved(
+        self,
+    ) -> None:
+        clients = []
+
+        def factory(server):
+            client = FakeMCPClient(
+                server
+            )
+            clients.append(
+                client
+            )
+            return client
+
+        recovery_summary = (
+            RobinhoodStartupRecoverySummary(
+                results=(),
+                unresolved_attempt_count=1,
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(
+                "stock_agent.brokers.robinhood."
+                "broker_runtime."
+                "run_robinhood_startup_recovery",
+                return_value=recovery_summary,
+            ):
+                with open_robinhood_runtime(
+                    account_number=(
+                        "agentic-account"
+                    ),
+                    not_found_grace_period=(
+                        timedelta(0)
+                    ),
+                    env={
+                        "ROBINHOOD_LIVE_EXECUTION_ENABLED":
+                            "true",
+                        "STOCK_AGENT_RUNTIME_MODE":
+                            "live",
+                    },
+                    base_dir=Path(directory),
+                    client_factory=factory,
+                ) as runtime:
+                    # User explicitly requested LIVE.
+                    self.assertTrue(
+                        runtime.live_execution_requested
+                    )
+
+                    # But unresolved exit placement
+                    # prevents live execution.
+                    self.assertFalse(
+                        runtime.live_execution_enabled
+                    )
+
+                    # Most important assertion:
+                    # no raw entry placer is exposed
+                    # while runtime is blocked.
+                    self.assertIsNone(
+                        runtime.entry_placer
+                    )
+
+                    # Read/recovery components can
+                    # still exist because they do not
+                    # themselves authorize a new order.
+                    self.assertIsNotNone(
+                        runtime.entry_recovery_service
+                    )
+
+                    self.assertIsNotNone(
+                        runtime.entry_activation_reconciler
+                    )
+
+                    self.assertIsNotNone(
+                        runtime.entry_placement_journal
+                    )
+
+                    self.assertIsNotNone(
+                        runtime.position_store
+                    )
+                    self.assertEqual(
+                        runtime.account_number,
+                        "agentic-account",
+                    )

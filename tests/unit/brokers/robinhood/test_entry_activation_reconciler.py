@@ -11,7 +11,18 @@ class FakeInvoker:
 
 
 class FakeJournal:
-    pass
+    def __init__(self) -> None:
+        self.list_acknowledged_calls = []
+
+    def list_acknowledged(
+        self,
+        *,
+        account_number: str,
+    ):
+        self.list_acknowledged_calls.append(
+            account_number
+        )
+        return []
 
 
 class FakeStore:
@@ -63,6 +74,13 @@ class RobinhoodEquityEntryActivationReconcilerTests(
             (),
         )
 
+        self.assertEqual(
+            journal.list_acknowledged_calls,
+            [
+                "agentic-account",
+            ],
+        )
+
         activate_mock.assert_called_once_with(
             invoker,
             journal,
@@ -92,6 +110,51 @@ class RobinhoodEquityEntryActivationReconcilerTests(
             reconciler.reconcile(
                 account_number=" "
             )
+
+    def test_blocks_when_acknowledged_entry_remains(
+        self,
+    ) -> None:
+        class Journal:
+            def list_acknowledged(
+                self,
+                *,
+                account_number,
+            ):
+                return [
+                    object()
+                ]
+
+        invoker = object()
+        journal = Journal()
+        store = object()
+        quote_provider = object()
+
+        reconciler = (
+            RobinhoodEquityEntryActivationReconciler(
+                invoker,
+                journal,
+                store,
+                quote_provider,
+            )
+        )
+
+        with patch(
+            "stock_agent.brokers.robinhood."
+            "entry_activation_reconciler."
+            "activate_acknowledged_equity_entries",
+            return_value=[],
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "acknowledged orders unresolved",
+            ):
+                reconciler.reconcile(
+                    account_number=(
+                        "agentic-account"
+                    )
+                )
+
+
 
 
 if __name__ == "__main__":

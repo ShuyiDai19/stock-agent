@@ -1,10 +1,20 @@
+from __future__ import annotations
+
 import os
 from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Iterator
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Iterator,
+)
 import logging
-from dataclasses import dataclass
+from dataclasses import (
+    dataclass,
+    field,
+)
 from pathlib import Path
 
 from stock_agent.brokers.robinhood.config import (
@@ -39,6 +49,28 @@ from stock_agent.brokers.robinhood.placement_recovery_service import (
 from stock_agent.brokers.robinhood.reconciler import (
     RobinhoodPlacementReconciler,
 )
+from stock_agent.brokers.robinhood.entry_activation_reconciler import (
+    RobinhoodEquityEntryActivationReconciler,
+)
+if TYPE_CHECKING:
+    from stock_agent.brokers.robinhood.entry_placer import (
+        RobinhoodApprovedEquityEntryPlacer,
+    )
+from stock_agent.brokers.robinhood.entry_placement import (
+    SQLiteEquityEntryPlacementJournal,
+)
+from stock_agent.brokers.robinhood.entry_placement_recovery import (
+    EquityEntryPlacementRecoveryService,
+)
+from stock_agent.brokers.robinhood.mcp_quote_provider import (
+    MCPRobinhoodEquityQuoteProvider,
+)
+from stock_agent.state import (
+    SQLitePositionStateStore,
+)
+from stock_agent.brokers.robinhood.mcp import (
+    MCPToolInvoker,
+)
 
 
 ROBINHOOD_LIVE_EXECUTION_ENV = (
@@ -52,6 +84,21 @@ ROBINHOOD_PLACEMENT_JOURNAL_PATH_ENV = (
 )
 DEFAULT_ROBINHOOD_PLACEMENT_JOURNAL_PATH = Path(
     ".state/robinhood/placement.sqlite3"
+)
+ROBINHOOD_ENTRY_PLACEMENT_JOURNAL_PATH_ENV = (
+    "ROBINHOOD_ENTRY_PLACEMENT_JOURNAL_PATH"
+)
+
+DEFAULT_ROBINHOOD_ENTRY_PLACEMENT_JOURNAL_PATH = Path(
+    ".state/robinhood/entry-placement.sqlite3"
+)
+
+ROBINHOOD_POSITION_STATE_PATH_ENV = (
+    "ROBINHOOD_POSITION_STATE_PATH"
+)
+
+DEFAULT_ROBINHOOD_POSITION_STATE_PATH = Path(
+    ".state/robinhood/positions.sqlite3"
 )
 
 logger = logging.getLogger(__name__)
@@ -141,6 +188,126 @@ def resolve_placement_journal_path(
     )
 
     return root / path
+
+def resolve_entry_placement_journal_path(
+    env: Mapping[str, str] | None = None,
+    *,
+    base_dir: Path | None = None,
+) -> Path:
+    source = os.environ if env is None else env
+
+    raw_path = source.get(
+        ROBINHOOD_ENTRY_PLACEMENT_JOURNAL_PATH_ENV
+    )
+
+    if raw_path is None:
+        path = (
+            DEFAULT_ROBINHOOD_ENTRY_PLACEMENT_JOURNAL_PATH
+        )
+    else:
+        stripped = raw_path.strip()
+
+        if not stripped:
+            raise ValueError(
+                "ROBINHOOD_ENTRY_PLACEMENT_JOURNAL_PATH "
+                "must not be empty"
+            )
+
+        path = Path(stripped)
+
+    if path.is_absolute():
+        return path
+
+    root = (
+        Path.cwd()
+        if base_dir is None
+        else base_dir
+    )
+
+    return root / path
+
+def resolve_position_state_path(
+    env: Mapping[str, str] | None = None,
+    *,
+    base_dir: Path | None = None,
+) -> Path:
+    source = os.environ if env is None else env
+
+    raw_path = source.get(
+        ROBINHOOD_POSITION_STATE_PATH_ENV
+    )
+
+    if raw_path is None:
+        path = (
+            DEFAULT_ROBINHOOD_POSITION_STATE_PATH
+        )
+    else:
+        stripped = raw_path.strip()
+
+        if not stripped:
+            raise ValueError(
+                "ROBINHOOD_POSITION_STATE_PATH "
+                "must not be empty"
+            )
+
+        path = Path(stripped)
+
+    if path.is_absolute():
+        return path
+
+    root = (
+        Path.cwd()
+        if base_dir is None
+        else base_dir
+    )
+
+    return root / path
+
+def build_production_entry_placement_journal(
+    env: Mapping[str, str] | None = None,
+    *,
+    base_dir: Path | None = None,
+) -> SQLiteEquityEntryPlacementJournal:
+    path = resolve_entry_placement_journal_path(
+        env,
+        base_dir=base_dir,
+    )
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    journal = SQLiteEquityEntryPlacementJournal(
+        path
+    )
+
+    journal.initialize()
+
+    return journal
+
+def build_production_position_state_store(
+    env: Mapping[str, str] | None = None,
+    *,
+    base_dir: Path | None = None,
+) -> SQLitePositionStateStore:
+    path = resolve_position_state_path(
+        env,
+        base_dir=base_dir,
+    )
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    store = SQLitePositionStateStore(
+        path
+    )
+
+    store.initialize()
+
+    return store
 
 def build_production_placement_journal(
     env: Mapping[str, str] | None = None,
@@ -299,11 +466,69 @@ class RobinhoodStartupRecoverySummary:
 
 @dataclass(frozen=True)
 class RobinhoodRuntimeSession:
+    account_number: str
+
     broker: GuardedRobinhoodBrokerClient
+
+    _strategy_invoker: MCPToolInvoker = field(
+        repr=False,
+        compare=False,
+    )
+
+    # Exit lifecycle.
     placement_journal: PlacementAttemptJournal
     recovery: RobinhoodStartupRecoverySummary
+
+    # Entry lifecycle.
+    entry_placement_journal: (
+        SQLiteEquityEntryPlacementJournal
+    )
+    position_store: SQLitePositionStateStore
+    entry_recovery_service: (
+        EquityEntryPlacementRecoveryService
+    )
+    entry_activation_reconciler: (
+        RobinhoodEquityEntryActivationReconciler
+    )
+    entry_placer: (
+        RobinhoodApprovedEquityEntryPlacer
+        | None
+    )
+
     live_execution_requested: bool
     live_execution_enabled: bool
+
+    def __post_init__(self) -> None:
+        if not self.account_number.strip():
+            raise ValueError(
+                "account_number cannot be empty"
+            )
+
+        if (
+            self.live_execution_enabled
+            and not self.live_execution_requested
+        ):
+            raise ValueError(
+                "live execution cannot be enabled "
+                "unless it was requested"
+            )
+
+        if (
+            self.live_execution_enabled
+            and self.entry_placer is None
+        ):
+            raise ValueError(
+                "live runtime requires entry placer"
+            )
+
+        if (
+            not self.live_execution_enabled
+            and self.entry_placer is not None
+        ):
+            raise ValueError(
+                "non-live runtime cannot expose "
+                "entry placer"
+            )
 
 def run_robinhood_startup_recovery(
     *,
@@ -353,6 +578,14 @@ def open_robinhood_runtime(
     placement_journal: (
         PlacementAttemptJournal | None
     ) = None,
+    entry_placement_journal: (
+        SQLiteEquityEntryPlacementJournal
+        | None
+    ) = None,
+    position_store: (
+        SQLitePositionStateStore
+        | None
+    ) = None,
     base_dir: Path | None = None,
     client_factory: Callable[[Any], Any] | None = None,
     startup_timeout_seconds: float = 10.0,
@@ -376,6 +609,30 @@ def open_robinhood_runtime(
     if journal is None:
         journal = (
             build_production_placement_journal(
+                env,
+                base_dir=base_dir,
+            )
+        )
+
+    entry_journal = (
+        entry_placement_journal
+    )
+
+    if entry_journal is None:
+        entry_journal = (
+            build_production_entry_placement_journal(
+                env,
+                base_dir=base_dir,
+            )
+        )
+
+    runtime_position_store = (
+        position_store
+    )
+
+    if runtime_position_store is None:
+        runtime_position_store = (
+            build_production_position_state_store(
                 env,
                 base_dir=base_dir,
             )
@@ -413,6 +670,50 @@ def open_robinhood_runtime(
             and not recovery.has_unresolved_attempts
         )
 
+        entry_lookup = (
+            MCPRobinhoodOrderLookup(
+                invoker
+            )
+        )
+
+        entry_recovery_service = (
+            EquityEntryPlacementRecoveryService(
+                entry_journal,
+                entry_lookup,
+                clock=_utc_now,
+            )
+        )
+
+        entry_quote_provider = (
+            MCPRobinhoodEquityQuoteProvider(
+                invoker
+            )
+        )
+
+        entry_activation_reconciler = (
+            RobinhoodEquityEntryActivationReconciler(
+                invoker,
+                entry_journal,
+                runtime_position_store,
+                entry_quote_provider,
+            )
+        )
+
+        entry_placer = None
+
+        if live_enabled:
+            from stock_agent.brokers.robinhood.entry_placer import (
+                RobinhoodApprovedEquityEntryPlacer,
+            )
+
+            entry_placer = (
+                RobinhoodApprovedEquityEntryPlacer(
+                    invoker,
+                    entry_journal,
+                    clock=_utc_now,
+                )
+            )
+
         if (
             live_requested
             and not live_enabled
@@ -433,9 +734,24 @@ def open_robinhood_runtime(
         )
 
         yield RobinhoodRuntimeSession(
+            account_number=account_number,
             broker=broker,
+            _strategy_invoker=invoker,
             placement_journal=journal,
             recovery=recovery,
+            entry_placement_journal=(
+                entry_journal
+            ),
+            position_store=(
+                runtime_position_store
+            ),
+            entry_recovery_service=(
+                entry_recovery_service
+            ),
+            entry_activation_reconciler=(
+                entry_activation_reconciler
+            ),
+            entry_placer=entry_placer,
             live_execution_requested=(
                 live_requested
             ),

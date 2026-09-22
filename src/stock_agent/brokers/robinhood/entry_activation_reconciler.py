@@ -33,23 +33,32 @@ class RobinhoodEquityEntryActivationReconciler:
         self,
         *,
         account_number: str,
-    ) -> tuple[
-        PositionRuntimeState,
-        ...,
-    ]:
+    ):
         if not account_number.strip():
             raise ValueError(
                 "account_number cannot be empty"
             )
 
-        return tuple(
+        activated = tuple(
             activate_acknowledged_equity_entries(
                 self._invoker,
                 self._journal,
                 self._store,
                 self._quote_provider,
-                account_number=(
-                    account_number
-                ),
+                account_number=account_number,
             )
         )
+
+        remaining_acknowledged = (
+            self._journal.list_acknowledged(
+                account_number=account_number
+            )
+        )
+
+        if remaining_acknowledged:
+            raise RuntimeError(
+                "entry activation reconciliation "
+                "left acknowledged orders unresolved"
+            )
+
+        return activated
