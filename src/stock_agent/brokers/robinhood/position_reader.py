@@ -1,6 +1,4 @@
 from dataclasses import dataclass
-from typing import Any
-from urllib.parse import parse_qs, urlparse
 
 from stock_agent.brokers.robinhood.mcp import (
     MCPToolInvoker,
@@ -11,12 +9,11 @@ from stock_agent.brokers.robinhood.mcp_position_decoder import (
 from stock_agent.brokers.robinhood.position_snapshots import (
     RobinhoodEquityPositionSnapshot,
 )
+from stock_agent.brokers.robinhood.mcp_position_pagination import (
+    RobinhoodPositionPaginationError,
+    extract_robinhood_position_next_cursor,
+)
 
-
-class RobinhoodPositionPaginationError(
-    ValueError
-):
-    pass
 
 
 @dataclass(frozen=True)
@@ -26,102 +23,6 @@ class RobinhoodEquityPositionReadResult:
         ...
     ]
 
-
-_MISSING = object()
-
-
-def _extract_next_url(
-    payload: dict[str, Any],
-) -> str | None:
-    top_level_next = payload.get(
-        "next",
-        _MISSING,
-    )
-
-    data = payload.get("data")
-
-    if isinstance(data, dict):
-        nested_next = data.get(
-            "next",
-            _MISSING,
-        )
-    else:
-        nested_next = _MISSING
-
-    if (
-        top_level_next is _MISSING
-        and nested_next is _MISSING
-    ):
-        return None
-
-    if (
-        top_level_next is not _MISSING
-        and nested_next is not _MISSING
-        and top_level_next != nested_next
-    ):
-        raise RobinhoodPositionPaginationError(
-            "conflicting pagination metadata"
-        )
-
-    next_value = (
-        top_level_next
-        if top_level_next is not _MISSING
-        else nested_next
-    )
-
-    if next_value is None:
-        return None
-
-    if not isinstance(
-        next_value,
-        str,
-    ):
-        raise RobinhoodPositionPaginationError(
-            "next must be a string or null"
-        )
-
-    next_url = next_value.strip()
-
-    if not next_url:
-        raise RobinhoodPositionPaginationError(
-            "next must not be empty"
-        )
-
-    return next_url
-
-
-def _extract_cursor(
-    next_url: str,
-) -> str:
-    parsed = urlparse(
-        next_url
-    )
-
-    if parsed.scheme != "https":
-        raise RobinhoodPositionPaginationError(
-            "next must use https"
-        )
-
-    query = parse_qs(
-        parsed.query,
-        keep_blank_values=True,
-    )
-
-    cursors = query.get(
-        "cursor"
-    )
-
-    if (
-        cursors is None
-        or len(cursors) != 1
-        or not cursors[0].strip()
-    ):
-        raise RobinhoodPositionPaginationError(
-            "next must contain exactly "
-            "one non-empty cursor"
-        )
-
-    return cursors[0]
 
 
 class MCPRobinhoodEquityPositionReader:
@@ -177,11 +78,13 @@ class MCPRobinhoodEquityPositionReader:
                 )
             )
 
-            next_url = _extract_next_url(
-                payload
+            cursor = (
+                extract_robinhood_position_next_cursor(
+                    payload
+                )
             )
 
-            if next_url is None:
+            if cursor is None:
                 return (
                     RobinhoodEquityPositionReadResult(
                         positions=tuple(
@@ -189,10 +92,6 @@ class MCPRobinhoodEquityPositionReader:
                         )
                     )
                 )
-
-            cursor = _extract_cursor(
-                next_url
-            )
 
             if cursor in seen_cursors:
                 raise (

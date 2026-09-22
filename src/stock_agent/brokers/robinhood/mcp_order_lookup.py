@@ -11,6 +11,9 @@ from stock_agent.brokers.robinhood.reconciler import (
     RobinhoodOrderLookupResult,
     RobinhoodOrderLookupStatus,
 )
+from stock_agent.brokers.robinhood.mcp_order_pagination import (
+    extract_robinhood_order_next_cursor,
+)
 from stock_agent.domain import AssetType
 from urllib.parse import parse_qs, urlsplit
 
@@ -41,55 +44,6 @@ def build_robinhood_mcp_order_lookup_call(
         f"unsupported asset type: {request.asset_type}"
     )
 
-def _extract_next_cursor(
-    raw_result: dict[str, Any],
-) -> str | None:
-    data = raw_result["data"]
-
-    markers = [
-        envelope["next"]
-        for envelope in (raw_result, data)
-        if "next" in envelope
-    ]
-
-    if not markers:
-        raise ValueError(
-            "Robinhood order lookup pagination metadata is missing"
-        )
-
-    if any(marker != markers[0] for marker in markers[1:]):
-        raise ValueError(
-            "Robinhood order lookup pagination metadata conflicts"
-        )
-
-    next_value = markers[0]
-
-    if next_value is None:
-        return None
-
-    if not isinstance(next_value, str) or not next_value.strip():
-        raise ValueError(
-            "Robinhood order lookup next must be a nonempty URL"
-        )
-
-    parsed = urlsplit(next_value)
-
-    if parsed.scheme != "https" or not parsed.netloc:
-        raise ValueError(
-            "Robinhood order lookup next must be an HTTPS URL"
-        )
-
-    cursors = parse_qs(
-        parsed.query,
-        keep_blank_values=True,
-    ).get("cursor", [])
-
-    if len(cursors) != 1 or not cursors[0]:
-        raise ValueError(
-            "Robinhood order lookup next must contain one cursor"
-        )
-
-    return cursors[0]
 
 def decode_robinhood_mcp_order_lookup(
     request: RobinhoodOrderLookupRequest,
@@ -136,7 +90,7 @@ def decode_robinhood_mcp_order_lookup(
                 broker_order_id=broker_order_id,
             )
 
-    next_cursor = _extract_next_cursor(raw_result)
+    next_cursor = extract_robinhood_order_next_cursor(raw_result)
 
     if next_cursor is not None:
         return RobinhoodOrderLookupResult(
@@ -204,7 +158,7 @@ class MCPRobinhoodOrderLookup:
                 if result.status is RobinhoodOrderLookupStatus.FOUND:
                     return result
 
-                next_cursor = _extract_next_cursor(
+                next_cursor = extract_robinhood_order_next_cursor(
                     raw_result
                 )
 
