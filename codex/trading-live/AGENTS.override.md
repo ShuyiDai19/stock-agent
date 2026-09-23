@@ -25,8 +25,8 @@ Equity positions must be fully paid and unleveraged.
 
 Permitted equity actions are:
 
-- Buy an eligible stock or unleveraged ETF using a fixed dollar amount
-  between $5 and $10.
+- equity opening: prohibited in Codex phase
+- equity closing: sell only currently owned shares
 - Use a regular-market-hours fractional market order when a whole share
   costs more than $10.
 - Sell only equity shares currently owned in account 0000.
@@ -110,28 +110,14 @@ Only evaluate:
 - MSFT
 - NVDA
 
-## Intraday entry confirmation
+## Intraday option entry confirmation
 
-For a bullish equity or long-call entry:
+For a long-call entry:
 
 - Current price must be above the regular-session opening price.
 - Current price must be above the current session VWAP when VWAP is available.
 - The two most recently completed 5-minute bars must not both close lower.
 - Do not enter based only on daily moving averages or daily RSI.
-
-## Equity entry requirements
-
-A fully-paid equity entry requires:
-
-- Price above the 20-day moving average.
-- 20-day moving average above the 50-day moving average.
-- RSI(14) between 50 and 70.
-- No existing position in the symbol.
-- No existing open order.
-- No opening order already submitted today.
-- Fixed dollar amount between $5 and $10.
-- At least $5 cash remaining after the order.
-- Regular market hours only.
 
 ## Long-call entry requirements
 
@@ -209,22 +195,32 @@ Closing requirements:
 1. Confirm account 0000 is agentic_allowed.
 2. Retrieve all required fresh account and market data.
 3. Inspect existing positions and open orders first.
-4. Manage an existing position before evaluating new entries.
+4. Manage an existing position before evaluating any option entry.
 5. Confirm no opening order has already been submitted today.
-6. Rank all eligible candidates.
-7. Select at most one action.
-8. Call the applicable Robinhood review tool.
-9. Verify the reviewed account, instrument, side, position effect,
-   quantity, order type, price, debit, fees, collateral, and buying power.
-10. Place only the exact order that was reviewed.
-11. Generate one fresh idempotency UUID for the logical order.
-12. Reuse that UUID only for a retry of the same transport request.
-13. Immediately retrieve the submitted order and report its actual status.
-14. Never report an order as filled unless Robinhood reports filled.
-15. If submission status is uncertain, do not retry automatically.
-16. Never weaken, override, or reinterpret this policy.
+6. Never evaluate, review, or place an equity opening order.
+7. If no position or open order exists, evaluate only permitted long-option entries.
+8. Select at most one permitted action.
+9. Call the applicable Robinhood review tool.
+10. Verify the reviewed account, instrument, side, position effect,
+    quantity, order type, price, debit, fees, collateral, and buying power.
+11. Place only the exact order that was reviewed.
+12. Generate one fresh idempotency UUID for the logical order.
+13. Reuse that UUID only for a retry of the same transport request.
+14. Immediately retrieve the submitted order and report its actual status.
+15. Never report an order as filled unless Robinhood reports filled.
+16. If submission status is uncertain, do not retry automatically.
+17. Never weaken, override, or reinterpret this policy.
 
-You are explicitly authorized to place one qualifying order without requesting
-interactive confirmation during a live cycle.
+### Equity opening ownership
 
-Any uncertainty means NO ACTION.
+Equity opening orders are exclusively owned by the production Python
+runtime invoked by `run_live_cycle.sh`.
+
+In the Codex phase:
+
+- Never submit an equity buy/opening order.
+- Never review an equity buy order for later placement.
+- Equity sells are permitted only to close currently owned shares when
+  an exit rule passes.
+- Do not attempt to reproduce, bypass, or override the Python equity
+  entry strategy, recovery, activation, preflight, or placement path.
