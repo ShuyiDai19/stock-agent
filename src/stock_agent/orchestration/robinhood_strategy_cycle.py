@@ -53,6 +53,10 @@ from stock_agent.orchestration.entry_activation_reconciliation import (
 from stock_agent.brokers.robinhood.entry_placement_recovery import (
     EquityEntryPlacementRecoveryService,
 )
+from stock_agent.orchestration.equity_entry_preflight_service import (
+    EquityEntryPreflightSnapshotReader,
+    require_live_equity_entry_preflight,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -454,6 +458,16 @@ def run_robinhood_equity_strategy_cycle_from_store(
         EquityEntryActivationReconciler
         | None
     ) = None,
+    preflight_reader: (
+        EquityEntryPreflightSnapshotReader
+        | None
+    ) = None,
+    preflight_opening_debit: (
+        Decimal | None
+    ) = None,
+    minimum_cash_reserve: Decimal = (
+        Decimal("5")
+    ),
 ) -> RobinhoodEquityCycleRunOutcome:
     resolver = (
         XnysRegularMarketSessionResolver()
@@ -484,6 +498,11 @@ def run_robinhood_equity_strategy_cycle_from_store(
         execution_mode
         is EquityEntryExecutionMode.LIVE
     ):
+        if placer is None:
+            raise ValueError(
+                "LIVE execution requires placer"
+            )
+
         if entry_recovery_service is None:
             raise ValueError(
                 "live entry execution requires "
@@ -494,6 +513,31 @@ def run_robinhood_equity_strategy_cycle_from_store(
             raise ValueError(
                 "live entry execution requires "
                 "activation reconciler"
+            )
+
+        if (
+            preflight_reader is None
+        ):
+            raise ValueError(
+                "LIVE execution requires "
+                "preflight_reader"
+            )
+
+        if (
+            preflight_opening_debit is None
+        ):
+            raise ValueError(
+                "LIVE execution requires "
+                "preflight_opening_debit"
+            )
+
+        if (
+            preflight_opening_debit
+            <= Decimal("0")
+        ):
+            raise ValueError(
+                "preflight_opening_debit "
+                "must be positive"
             )
 
         recovery_results = (
@@ -513,6 +557,18 @@ def run_robinhood_equity_strategy_cycle_from_store(
 
         activation_reconciler.reconcile(
             account_number=account_number
+        )
+
+        require_live_equity_entry_preflight(
+            preflight_reader,
+            account_number=account_number,
+            evaluated_at=evaluated_at,
+            opening_debit=(
+                preflight_opening_debit
+            ),
+            minimum_cash_reserve=(
+                minimum_cash_reserve
+            ),
         )
 
     universe = (

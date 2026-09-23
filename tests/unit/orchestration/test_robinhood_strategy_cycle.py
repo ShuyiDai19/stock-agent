@@ -26,6 +26,13 @@ from stock_agent.orchestration.entry_placement_cycle import (
     EquityEntryExecutionMode,
     EquityEntryPlacementStatus,
 )
+from stock_agent.orchestration.equity_entry_preflight import (
+    EquityEntryPreflightBlocker,
+    EquityEntryPreflightSnapshot,
+)
+from stock_agent.orchestration.equity_entry_preflight_service import (
+    EquityEntryPreflightBlockedError,
+)
 
 
 _SESSION_START = datetime(
@@ -43,6 +50,15 @@ _EVALUATED_AT = datetime(
     18,
     13,
     47,
+    tzinfo=timezone.utc,
+)
+
+_LIVE_EVALUATED_AT = datetime(
+    2026,
+    9,
+    18,
+    14,
+    17,
     tzinfo=timezone.utc,
 )
 
@@ -308,6 +324,187 @@ class FakeInvoker:
             f"unexpected tool: {tool_name}"
         )
 
+class LiveFakeInvoker(
+    FakeInvoker
+):
+    def call_tool(
+        self,
+        tool_name,
+        arguments,
+    ):
+        if (
+            tool_name
+            == "get_equity_quotes"
+        ):
+            self.calls.append(
+                (
+                    tool_name,
+                    dict(arguments),
+                )
+            )
+
+            symbol = arguments[
+                "symbols"
+            ][0]
+
+            return {
+                "data": {
+                    "results": [
+                        {
+                            "quote": {
+                                "symbol": symbol,
+                                "last_trade_price": (
+                                    "102.50"
+                                ),
+                                "venue_last_trade_time": (
+                                    "2026-09-18"
+                                    "T14:16:59Z"
+                                ),
+                                "bid_price": (
+                                    "102.45"
+                                ),
+                                "venue_bid_time": (
+                                    "2026-09-18"
+                                    "T14:16:58Z"
+                                ),
+                                "ask_price": (
+                                    "102.55"
+                                ),
+                                "venue_ask_time": (
+                                    "2026-09-18"
+                                    "T14:16:59Z"
+                                ),
+                                "has_traded": True,
+                                "state": "active",
+                            }
+                        }
+                    ]
+                }
+            }
+
+        if (
+            tool_name
+            == "get_equity_historicals"
+        ):
+            self.calls.append(
+                (
+                    tool_name,
+                    dict(arguments),
+                )
+            )
+
+            symbol = arguments[
+                "symbols"
+            ][0]
+
+            return {
+                "data": {
+                    "results": [
+                        {
+                            "symbol": symbol,
+                            "interval": "5minute",
+                            "bounds": "regular",
+                            "bars": [
+                                {
+                                    "begins_at": (
+                                        "2026-09-18"
+                                        "T13:30:00Z"
+                                    ),
+                                    "open_price": "100",
+                                    "high_price": "101",
+                                    "low_price": "99",
+                                    "close_price": "100",
+                                    "volume": 100,
+                                },
+                                {
+                                    "begins_at": (
+                                        "2026-09-18"
+                                        "T14:00:00Z"
+                                    ),
+                                    "open_price": "100",
+                                    "high_price": "102",
+                                    "low_price": "100",
+                                    "close_price": "101",
+                                    "volume": 200,
+                                },
+                                {
+                                    "begins_at": (
+                                        "2026-09-18"
+                                        "T14:05:00Z"
+                                    ),
+                                    "open_price": "101",
+                                    "high_price": "103",
+                                    "low_price": "101",
+                                    "close_price": "102",
+                                    "volume": 300,
+                                },
+                                {
+                                    "begins_at": (
+                                        "2026-09-18"
+                                        "T14:10:00Z"
+                                    ),
+                                    "open_price": "102",
+                                    "high_price": "103",
+                                    "low_price": "101",
+                                    "close_price": "102.5",
+                                    "volume": 300,
+                                },
+                            ],
+                        }
+                    ]
+                }
+            }
+
+        if (
+            tool_name
+            == "review_equity_order"
+        ):
+            self.calls.append(
+                (
+                    tool_name,
+                    dict(arguments),
+                )
+            )
+
+            symbol = arguments[
+                "symbol"
+            ]
+
+            return {
+                "data": {
+                    "symbol": symbol,
+                    "side": "buy",
+                    "type": "market",
+                    "dollar_amount": (
+                        arguments[
+                            "dollar_amount"
+                        ]
+                    ),
+                    "order_checks": {},
+                    "quote_data": {
+                        "bid_price": (
+                            "102.45"
+                        ),
+                        "ask_price": (
+                            "102.55"
+                        ),
+                        "venue_bid_time": (
+                            "2026-09-18"
+                            "T14:16:58Z"
+                        ),
+                        "venue_ask_time": (
+                            "2026-09-18"
+                            "T14:16:59Z"
+                        ),
+                    },
+                }
+            }
+
+        return super().call_tool(
+            tool_name,
+            arguments,
+        )
+
 class ExplodingPlacer:
     def place(
         self,
@@ -376,6 +573,58 @@ class RecordingActivationReconciler:
         )
 
         return ()
+
+class CleanPreflightReader:
+    def __init__(
+        self,
+        *,
+        events=None,
+    ) -> None:
+        self.calls = []
+        self.events = events
+
+    def read(
+        self,
+        *,
+        account_number,
+        evaluated_at,
+    ):
+        self.calls.append(
+            (
+                account_number,
+                evaluated_at,
+            )
+        )
+
+        if self.events is not None:
+            self.events.append(
+                "preflight"
+            )
+
+        return EquityEntryPreflightSnapshot(
+            has_existing_position=False,
+            has_open_equity_order=False,
+            has_open_option_order=False,
+            has_opening_order_today=False,
+            buying_power=Decimal("90"),
+            cash=Decimal("90"),
+        )
+
+class ExistingPositionPreflightReader:
+    def read(
+        self,
+        *,
+        account_number,
+        evaluated_at,
+    ):
+        return EquityEntryPreflightSnapshot(
+            has_existing_position=True,
+            has_open_equity_order=False,
+            has_open_option_order=False,
+            has_opening_order_today=False,
+            buying_power=Decimal("90"),
+            cash=Decimal("90"),
+        )
 
 class RobinhoodStrategyCycleTests(
     unittest.TestCase
@@ -1343,9 +1592,11 @@ class RobinhoodStrategyCycleTests(
             RecordingActivationReconciler()
         )
 
+        invoker = LiveFakeInvoker()
+
         result = (
             run_robinhood_equity_strategy_cycle_from_store(
-                FakeInvoker(),
+                invoker,
                 Store(),
                 account_number=(
                     "agentic-account"
@@ -1357,7 +1608,7 @@ class RobinhoodStrategyCycleTests(
                     _UNIVERSE_POLICY
                 ),
                 evaluated_at=(
-                    _EVALUATED_AT
+                    _LIVE_EVALUATED_AT
                 ),
                 execution_mode=(
                     EquityEntryExecutionMode
@@ -1370,6 +1621,12 @@ class RobinhoodStrategyCycleTests(
                 entry_recovery_service=(
                     NoopEntryRecoveryService()
                 ),
+                preflight_reader=(
+                    CleanPreflightReader()
+                ),
+                preflight_opening_debit=(
+                    Decimal("10")
+                ),
             )
         )
 
@@ -1377,6 +1634,21 @@ class RobinhoodStrategyCycleTests(
             result.execution_mode,
             EquityEntryExecutionMode
             .LIVE,
+        )
+
+        self.assertEqual(
+            result.market_data_error_count,
+            0,
+        )
+
+        self.assertEqual(
+            result.review_error_count,
+            0,
+        )
+
+        self.assertEqual(
+            result.eligible_entry_count,
+            1,
         )
 
         self.assertEqual(
@@ -1448,6 +1720,12 @@ class RobinhoodStrategyCycleTests(
                 activation_reconciler=(
                     RecordingActivationReconciler()
                 ),
+                preflight_reader=(
+                    CleanPreflightReader()
+                ),
+                preflight_opening_debit=(
+                    Decimal("10")
+                ),
             )
 
     def test_live_mode_requires_activation_reconciler(
@@ -1489,6 +1767,12 @@ class RobinhoodStrategyCycleTests(
                     NoopEntryRecoveryService()
                 ),
                 placer=RecordingPlacer(),
+                preflight_reader=(
+                    CleanPreflightReader()
+                ),
+                preflight_opening_debit=(
+                    Decimal("10")
+                ),
             )
 
     def test_live_reconciles_entry_before_loading_portfolio_risk(
@@ -1631,7 +1915,7 @@ class RobinhoodStrategyCycleTests(
                     _UNIVERSE_POLICY
                 ),
                 evaluated_at=(
-                    _EVALUATED_AT
+                    _LIVE_EVALUATED_AT
                 ),
                 execution_mode=(
                     EquityEntryExecutionMode
@@ -1646,6 +1930,14 @@ class RobinhoodStrategyCycleTests(
                     )
                 ),
                 placer=placer,
+                preflight_reader=(
+                    CleanPreflightReader(
+                        events=events
+                    )
+                ),
+                preflight_opening_debit=(
+                    Decimal("10")
+                ),
             )
         )
 
@@ -1665,6 +1957,7 @@ class RobinhoodStrategyCycleTests(
             [
                 "recover",
                 "activate",
+                "preflight",
                 "load_positions",
             ],
         )
@@ -1698,6 +1991,12 @@ class RobinhoodStrategyCycleTests(
                 placer=RecordingPlacer(),
                 activation_reconciler=(
                     RecordingActivationReconciler()
+                ),
+                preflight_reader=(
+                    CleanPreflightReader()
+                ),
+                preflight_opening_debit=(
+                    Decimal("10")
                 ),
             )
 
@@ -1736,6 +2035,26 @@ class RobinhoodStrategyCycleTests(
                     "after unresolved recovery"
                 )
 
+        class PreflightReader:
+            def read(
+                self,
+                *,
+                account_number,
+                evaluated_at,
+            ):
+                events.append(
+                    "preflight"
+                )
+
+                return EquityEntryPreflightSnapshot(
+                    has_existing_position=False,
+                    has_open_equity_order=False,
+                    has_open_option_order=False,
+                    has_opening_order_today=False,
+                    buying_power=Decimal("90"),
+                    cash=Decimal("90"),
+                )
+
         class Store:
             def list_by_status(
                 self,
@@ -1761,7 +2080,7 @@ class RobinhoodStrategyCycleTests(
                 account_number="agentic-account",
                 allowed_symbols=("AAPL",),
                 universe_policy=_UNIVERSE_POLICY,
-                evaluated_at=_EVALUATED_AT,
+                evaluated_at=_LIVE_EVALUATED_AT,
                 execution_mode=(
                     EquityEntryExecutionMode.LIVE
                 ),
@@ -1772,6 +2091,12 @@ class RobinhoodStrategyCycleTests(
                 activation_reconciler=(
                     ActivationReconciler()
                 ),
+                preflight_reader=(
+                    CleanPreflightReader()
+                ),
+                preflight_opening_debit=(
+                    Decimal("10")
+                ),
             )
 
         self.assertEqual(
@@ -1779,6 +2104,241 @@ class RobinhoodStrategyCycleTests(
             [
                 "recover",
             ],
+        )
+
+    def test_live_mode_blocks_when_acknowledged_entry_is_not_filled(
+        self,
+    ) -> None:
+        events = []
+
+        class RecoveryService:
+            def recover(
+                self,
+                *,
+                account_number,
+            ):
+                events.append(
+                    "recover"
+                )
+                return []
+
+        class ActivationReconciler:
+            def reconcile(
+                self,
+                *,
+                account_number,
+            ):
+                events.append(
+                    "activate"
+                )
+
+                raise RuntimeError(
+                    "entry activation reconciliation "
+                    "left acknowledged orders unresolved"
+                )
+
+        class Store:
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                events.append(
+                    "load_positions"
+                )
+                raise AssertionError(
+                    "portfolio must not load "
+                    "while entry order is pending"
+                )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "acknowledged orders unresolved",
+        ):
+            run_robinhood_equity_strategy_cycle_from_store(
+                FakeInvoker(),
+                Store(),
+                account_number=(
+                    "agentic-account"
+                ),
+                allowed_symbols=(
+                    "AAPL",
+                ),
+                universe_policy=(
+                    _UNIVERSE_POLICY
+                ),
+                evaluated_at=(
+                    _LIVE_EVALUATED_AT
+                ),
+                execution_mode=(
+                    EquityEntryExecutionMode.LIVE
+                ),
+                placer=RecordingPlacer(),
+                entry_recovery_service=(
+                    RecoveryService()
+                ),
+                activation_reconciler=(
+                    ActivationReconciler()
+                ),
+                preflight_reader=(
+                    CleanPreflightReader()
+                ),
+                preflight_opening_debit=(
+                    Decimal("10")
+                ),
+            )
+
+        self.assertEqual(
+            events,
+            [
+                "recover",
+                "activate",
+            ],
+        )
+
+    def test_live_preflight_blocker_stops_before_strategy(
+        self,
+    ) -> None:
+        class Store:
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                raise AssertionError(
+                    "position store must not "
+                    "be read after preflight "
+                    "blocks entry"
+                )
+
+        invoker = FakeInvoker()
+
+        with self.assertRaises(
+            EquityEntryPreflightBlockedError
+        ) as captured:
+            (
+                run_robinhood_equity_strategy_cycle_from_store(
+                    invoker,
+                    Store(),
+                    account_number=(
+                        "agentic-account"
+                    ),
+                    allowed_symbols=(
+                        "AAPL",
+                    ),
+                    universe_policy=(
+                        _UNIVERSE_POLICY
+                    ),
+                    evaluated_at=(
+                        _LIVE_EVALUATED_AT
+                    ),
+                    execution_mode=(
+                        EquityEntryExecutionMode
+                        .LIVE
+                    ),
+                    placer=(
+                        RecordingPlacer()
+                    ),
+                    activation_reconciler=(
+                        RecordingActivationReconciler()
+                    ),
+                    entry_recovery_service=(
+                        NoopEntryRecoveryService()
+                    ),
+                    preflight_reader=(
+                        ExistingPositionPreflightReader()
+                    ),
+                    preflight_opening_debit=(
+                        Decimal("10")
+                    ),
+                )
+            )
+
+        self.assertIn(
+            EquityEntryPreflightBlocker
+            .EXISTING_POSITION,
+            captured.exception.result.blockers,
+        )
+
+        self.assertEqual(
+            invoker.calls,
+            [],
+        )
+
+    def test_live_preflight_read_failure_fails_closed(
+        self,
+    ) -> None:
+        class FailingPreflightReader:
+            def read(
+                self,
+                *,
+                account_number,
+                evaluated_at,
+            ):
+                raise RuntimeError(
+                    "portfolio unavailable"
+                )
+
+        class Store:
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                raise AssertionError(
+                    "store must not be read"
+                )
+
+        with self.assertRaises(
+            EquityEntryPreflightBlockedError
+        ) as captured:
+            (
+                run_robinhood_equity_strategy_cycle_from_store(
+                    FakeInvoker(),
+                    Store(),
+                    account_number=(
+                        "agentic-account"
+                    ),
+                    allowed_symbols=(
+                        "AAPL",
+                    ),
+                    universe_policy=(
+                        _UNIVERSE_POLICY
+                    ),
+                    evaluated_at=(
+                        _EVALUATED_AT
+                    ),
+                    execution_mode=(
+                        EquityEntryExecutionMode
+                        .LIVE
+                    ),
+                    placer=(
+                        RecordingPlacer()
+                    ),
+                    activation_reconciler=(
+                        RecordingActivationReconciler()
+                    ),
+                    entry_recovery_service=(
+                        NoopEntryRecoveryService()
+                    ),
+                    preflight_reader=(
+                        FailingPreflightReader()
+                    ),
+                    preflight_opening_debit=(
+                        Decimal("10")
+                    ),
+                )
+            )
+
+        self.assertEqual(
+            captured.exception.result.blockers,
+            (
+                EquityEntryPreflightBlocker
+                .DATA_UNAVAILABLE,
+            ),
         )
 
 

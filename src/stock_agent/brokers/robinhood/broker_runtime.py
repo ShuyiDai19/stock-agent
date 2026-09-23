@@ -56,6 +56,9 @@ if TYPE_CHECKING:
     from stock_agent.brokers.robinhood.entry_placer import (
         RobinhoodApprovedEquityEntryPlacer,
     )
+    from stock_agent.brokers.robinhood.entry_preflight_reader import (
+        RobinhoodEquityEntryPreflightReader,
+    )
 from stock_agent.brokers.robinhood.entry_placement import (
     SQLiteEquityEntryPlacementJournal,
 )
@@ -490,6 +493,9 @@ class RobinhoodRuntimeSession:
     entry_activation_reconciler: (
         RobinhoodEquityEntryActivationReconciler
     )
+    entry_preflight_reader: (
+        RobinhoodEquityEntryPreflightReader
+    )
     entry_placer: (
         RobinhoodApprovedEquityEntryPlacer
         | None
@@ -528,6 +534,15 @@ class RobinhoodRuntimeSession:
             raise ValueError(
                 "non-live runtime cannot expose "
                 "entry placer"
+            )
+
+        if (
+            self.live_execution_enabled
+            and self.entry_preflight_reader is None
+        ):
+            raise ValueError(
+                "live runtime requires "
+                "entry preflight reader"
             )
 
 def run_robinhood_startup_recovery(
@@ -699,6 +714,47 @@ def open_robinhood_runtime(
             )
         )
 
+        from stock_agent.brokers.robinhood.position_reader import (
+            MCPRobinhoodEquityPositionReader,
+        )
+        from stock_agent.brokers.robinhood.option_exposure_reader import (
+            MCPRobinhoodOptionExposureReader,
+        )
+        from stock_agent.brokers.robinhood.mcp_order_activity_reader import (
+            MCPRobinhoodOrderActivityReader,
+        )
+        from stock_agent.brokers.robinhood.mcp_entry_funds_reader import (
+            MCPRobinhoodEntryFundsReader,
+        )
+        from stock_agent.brokers.robinhood.entry_preflight_reader import (
+            RobinhoodEquityEntryPreflightReader,
+        )
+
+        entry_preflight_reader = (
+            RobinhoodEquityEntryPreflightReader(
+                position_reader=(
+                    MCPRobinhoodEquityPositionReader(
+                        invoker
+                    )
+                ),
+                option_exposure_reader=(
+                    MCPRobinhoodOptionExposureReader(
+                        invoker
+                    )
+                ),
+                order_activity_reader=(
+                    MCPRobinhoodOrderActivityReader(
+                        invoker
+                    )
+                ),
+                funds_reader=(
+                    MCPRobinhoodEntryFundsReader(
+                        invoker
+                    )
+                ),
+            )
+        )
+
         entry_placer = None
 
         if live_enabled:
@@ -724,6 +780,7 @@ def open_robinhood_runtime(
                 "attempts=%d",
                 recovery.unresolved_attempt_count,
             )
+            
 
         broker = (
             _build_guarded_robinhood_broker(
@@ -750,6 +807,9 @@ def open_robinhood_runtime(
             ),
             entry_activation_reconciler=(
                 entry_activation_reconciler
+            ),
+            entry_preflight_reader=(
+                entry_preflight_reader
             ),
             entry_placer=entry_placer,
             live_execution_requested=(

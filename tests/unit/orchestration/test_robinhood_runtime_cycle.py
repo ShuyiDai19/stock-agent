@@ -60,6 +60,9 @@ class RobinhoodRuntimeCycleTests(
             entry_activation_reconciler=(
                 object()
             ),
+            entry_preflight_reader=(
+                object()
+            ),
         )
 
         expected = object()
@@ -114,6 +117,18 @@ class RobinhoodRuntimeCycleTests(
             ]
         )
 
+        self.assertIsNone(
+            kwargs[
+                "preflight_reader"
+            ]
+        )
+
+        self.assertIsNone(
+            kwargs[
+                "preflight_opening_debit"
+            ]
+        )
+
         self.assertEqual(
             kwargs["account_number"],
             "agentic-account",
@@ -137,6 +152,8 @@ class RobinhoodRuntimeCycleTests(
         placer = object()
         recovery_service = object()
         activation_reconciler = object()
+        preflight_reader = object()
+        budget = Decimal("10")
 
         runtime = SimpleNamespace(
             account_number=(
@@ -152,6 +169,9 @@ class RobinhoodRuntimeCycleTests(
             ),
             entry_activation_reconciler=(
                 activation_reconciler
+            ),
+            entry_preflight_reader=(
+                preflight_reader
             ),
         )
 
@@ -173,6 +193,7 @@ class RobinhoodRuntimeCycleTests(
                     evaluated_at=(
                         _EVALUATED_AT
                     ),
+                    budget=budget,
                 )
             )
 
@@ -203,6 +224,20 @@ class RobinhoodRuntimeCycleTests(
             activation_reconciler,
         )
 
+        self.assertIs(
+            kwargs[
+                "preflight_reader"
+            ],
+            preflight_reader,
+        )
+
+        self.assertEqual(
+            kwargs[
+                "preflight_opening_debit"
+            ],
+            budget,
+        )
+
     def test_live_runtime_without_placer_fails_closed(
         self,
     ) -> None:
@@ -219,6 +254,9 @@ class RobinhoodRuntimeCycleTests(
             entry_activation_reconciler=(
                 object()
             ),
+            entry_preflight_reader=(
+                object()
+            ),
         )
 
         with patch(
@@ -229,6 +267,47 @@ class RobinhoodRuntimeCycleTests(
             with self.assertRaisesRegex(
                 RuntimeError,
                 "missing entry placer",
+            ):
+                run_robinhood_equity_cycle_from_runtime(
+                    runtime,
+                    allowed_symbols=(
+                        "AAPL",
+                    ),
+                    universe_policy=_POLICY,
+                    evaluated_at=(
+                        _EVALUATED_AT
+                    ),
+                )
+
+            run_cycle.assert_not_called()
+
+    def test_live_runtime_without_preflight_reader_fails_closed(
+        self,
+    ) -> None:
+        runtime = SimpleNamespace(
+            account_number=(
+                "agentic-account"
+            ),
+            _strategy_invoker=object(),
+            position_store=object(),
+            live_execution_requested=True,
+            live_execution_enabled=True,
+            entry_placer=object(),
+            entry_recovery_service=object(),
+            entry_activation_reconciler=(
+                object()
+            ),
+            entry_preflight_reader=None,
+        )
+
+        with patch(
+            "stock_agent.orchestration."
+            "robinhood_runtime_cycle."
+            "run_robinhood_equity_strategy_cycle_from_store",
+        ) as run_cycle:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "missing entry preflight reader",
             ):
                 run_robinhood_equity_cycle_from_runtime(
                     runtime,

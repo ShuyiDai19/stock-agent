@@ -42,7 +42,9 @@ from stock_agent.brokers.robinhood.submissions import (
     RobinhoodTimeInForce,
 )
 from stock_agent.domain import AssetType
-
+from stock_agent.brokers.robinhood.entry_preflight_reader import (
+    RobinhoodEquityEntryPreflightReader,
+)
 
 
     
@@ -961,6 +963,11 @@ class RobinhoodBrokerRuntimeTests(
                     journal,
                 )
 
+                self.assertIsInstance(
+                    runtime.entry_preflight_reader,
+                    RobinhoodEquityEntryPreflightReader,
+                )
+
             self.assertEqual(
                 len(clients),
                 1,
@@ -1056,6 +1063,11 @@ class RobinhoodBrokerRuntimeTests(
                             runtime.broker.submit_exit_order(
                                 self.make_submission()
                             )
+
+                        self.assertIsInstance(
+                            runtime.entry_preflight_reader,
+                            RobinhoodEquityEntryPreflightReader,
+                        )
 
             output = "\n".join(
                 captured.output
@@ -1252,6 +1264,11 @@ class RobinhoodBrokerRuntimeTests(
                     runtime.live_execution_enabled
                 )
 
+                self.assertIsInstance(
+                    runtime.entry_preflight_reader,
+                    RobinhoodEquityEntryPreflightReader,
+                )
+
             self.assertTrue(
                 (
                     base_dir
@@ -1312,6 +1329,11 @@ class RobinhoodBrokerRuntimeTests(
                     "agentic-account",
                 )
 
+                self.assertIsInstance(
+                    runtime.entry_preflight_reader,
+                    RobinhoodEquityEntryPreflightReader,
+                )
+
     def test_runtime_does_not_expose_entry_placer_when_exit_recovery_is_unresolved(
         self,
     ) -> None:
@@ -1367,16 +1389,10 @@ class RobinhoodBrokerRuntimeTests(
                         runtime.live_execution_enabled
                     )
 
-                    # Most important assertion:
-                    # no raw entry placer is exposed
-                    # while runtime is blocked.
                     self.assertIsNone(
                         runtime.entry_placer
                     )
 
-                    # Read/recovery components can
-                    # still exist because they do not
-                    # themselves authorize a new order.
                     self.assertIsNotNone(
                         runtime.entry_recovery_service
                     )
@@ -1395,4 +1411,9 @@ class RobinhoodBrokerRuntimeTests(
                     self.assertEqual(
                         runtime.account_number,
                         "agentic-account",
+                    )
+
+                    self.assertIsInstance(
+                        runtime.entry_preflight_reader,
+                        RobinhoodEquityEntryPreflightReader,
                     )

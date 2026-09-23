@@ -32,16 +32,32 @@ def run_robinhood_equity_cycle_from_runtime(
                 "entry placer"
             )
 
+        if runtime.entry_preflight_reader is None:
+            raise RuntimeError(
+                "live runtime is missing "
+                "entry preflight reader"
+            )
+
         execution_mode = (
             EquityEntryExecutionMode.LIVE
         )
 
         placer = runtime.entry_placer
+
         entry_recovery_service = (
             runtime.entry_recovery_service
         )
+
         activation_reconciler = (
             runtime.entry_activation_reconciler
+        )
+
+        preflight_reader = (
+            runtime.entry_preflight_reader
+        )
+
+        preflight_opening_debit = (
+            budget
         )
 
     else:
@@ -53,6 +69,8 @@ def run_robinhood_equity_cycle_from_runtime(
         placer = None
         entry_recovery_service = None
         activation_reconciler = None
+        preflight_reader = None
+        preflight_opening_debit = None
 
     return (
         run_robinhood_equity_strategy_cycle_from_store(
@@ -72,6 +90,12 @@ def run_robinhood_equity_cycle_from_runtime(
             ),
             activation_reconciler=(
                 activation_reconciler
+            ),
+            preflight_reader=(
+                preflight_reader
+            ),
+            preflight_opening_debit=(
+                preflight_opening_debit
             ),
         )
     )
