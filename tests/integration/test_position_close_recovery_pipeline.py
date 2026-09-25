@@ -83,7 +83,8 @@ class FakeMCPToolInvoker:
                         "id": _BROKER_ORDER_ID,
                         "ref_id": _REF_ID,
                         "state": "filled",
-                        "quantity": "1",
+                        "quantity": None,
+                        "cumulative_quantity": "1",
                     }
                 ]
             }
