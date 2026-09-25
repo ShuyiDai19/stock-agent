@@ -445,6 +445,75 @@ class RobinhoodEquityProductionRunnerTests(
             ),
         )
 
+    def test_main_treats_normal_preflight_block_as_no_action(
+        self,
+    ) -> None:
+        blocked = (
+            EquityEntryPreflightBlockedError(
+                EquityEntryPreflightResult(
+                    blockers=(
+                        EquityEntryPreflightBlocker
+                        .EXISTING_POSITION,
+                    )
+                )
+            )
+        )
+
+        output = StringIO()
+
+        with patch(
+            "stock_agent.runners."
+            "robinhood_equity_cycle."
+            "run_production_robinhood_equity_cycle",
+            side_effect=blocked,
+        ):
+            with redirect_stdout(
+                output
+            ):
+                exit_code = main()
+
+        self.assertEqual(
+            exit_code,
+            0,
+        )
+
+        self.assertEqual(
+            output.getvalue().strip(),
+            (
+                "EQUITY ENTRY CYCLE RESULT: "
+                "NO ACTION"
+            ),
+        )
+
+    def test_main_fails_closed_when_preflight_data_is_unavailable(
+        self,
+    ) -> None:
+        blocked = (
+            EquityEntryPreflightBlockedError(
+                EquityEntryPreflightResult(
+                    blockers=(
+                        EquityEntryPreflightBlocker
+                        .DATA_UNAVAILABLE,
+                    )
+                )
+            )
+        )
+
+        with patch(
+            "stock_agent.runners."
+            "robinhood_equity_cycle."
+            "run_production_robinhood_equity_cycle",
+            side_effect=blocked,
+        ):
+            with self.assertRaises(
+                EquityEntryPreflightBlockedError
+            ):
+                main()
+
+
+
+    
+
 
 if __name__ == "__main__":
     unittest.main()
