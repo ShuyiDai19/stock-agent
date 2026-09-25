@@ -481,6 +481,9 @@ class RobinhoodRuntimeSession:
     # Exit lifecycle.
     placement_journal: PlacementAttemptJournal
     recovery: RobinhoodStartupRecoverySummary
+    equity_exit_reconciler: (
+        RobinhoodEquityExitReconciler
+    )
 
     # Entry lifecycle.
     entry_placement_journal: (
@@ -500,6 +503,7 @@ class RobinhoodRuntimeSession:
         RobinhoodApprovedEquityEntryPlacer
         | None
     )
+    
 
     live_execution_requested: bool
     live_execution_enabled: bool
@@ -685,6 +689,58 @@ def open_robinhood_runtime(
             and not recovery.has_unresolved_attempts
         )
 
+        from stock_agent.brokers.robinhood.exit_state_reconciliation import (
+            EquityExitStateReconciler,
+        )
+        from stock_agent.brokers.robinhood.equity_exit_reconciler import (
+            RobinhoodEquityExitReconciler,
+        )
+        from stock_agent.brokers.robinhood.journal_position_close_service import (
+            JournalBackedEquityPositionCloseService,
+        )
+        from stock_agent.brokers.robinhood.mcp_order_execution_reader import (
+            MCPRobinhoodEquityOrderExecutionReader,
+        )
+        from stock_agent.brokers.robinhood.position_close_service import (
+            EquityPositionCloseConfirmationService,
+        )
+
+        exit_state_reconciler = (
+            EquityExitStateReconciler(
+                journal,
+                runtime_position_store,
+            )
+        )
+
+        exit_execution_reader = (
+            MCPRobinhoodEquityOrderExecutionReader(
+                invoker
+            )
+        )
+
+        exit_close_confirmation_service = (
+            EquityPositionCloseConfirmationService(
+                runtime_position_store,
+                exit_execution_reader,
+                clock=_utc_now,
+            )
+        )
+
+        exit_close_service = (
+            JournalBackedEquityPositionCloseService(
+                journal,
+                exit_close_confirmation_service,
+            )
+        )
+
+        equity_exit_reconciler = (
+            RobinhoodEquityExitReconciler(
+                exit_state_reconciler,
+                exit_close_service,
+                runtime_position_store,
+            )
+        )
+
         entry_lookup = (
             MCPRobinhoodOrderLookup(
                 invoker
@@ -796,6 +852,9 @@ def open_robinhood_runtime(
             _strategy_invoker=invoker,
             placement_journal=journal,
             recovery=recovery,
+            equity_exit_reconciler=(
+                equity_exit_reconciler
+            ),
             entry_placement_journal=(
                 entry_journal
             ),

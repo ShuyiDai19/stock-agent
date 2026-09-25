@@ -45,6 +45,9 @@ from stock_agent.domain import AssetType
 from stock_agent.brokers.robinhood.entry_preflight_reader import (
     RobinhoodEquityEntryPreflightReader,
 )
+from stock_agent.brokers.robinhood.equity_exit_reconciler import (
+    RobinhoodEquityExitReconciler,
+)
 
 
     
@@ -1417,3 +1420,125 @@ class RobinhoodBrokerRuntimeTests(
                         runtime.entry_preflight_reader,
                         RobinhoodEquityEntryPreflightReader,
                     )
+
+    def test_runtime_exposes_equity_exit_reconciler_without_running_it(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            clients = []
+
+            def client_factory(
+                server,
+            ):
+                client = FakeMCPClient(
+                    server
+                )
+                clients.append(
+                    client
+                )
+                return client
+
+            with open_robinhood_runtime(
+                account_number=(
+                    "agentic-account"
+                ),
+                not_found_grace_period=(
+                    timedelta(seconds=120)
+                ),
+                env={
+                    "STOCK_AGENT_RUNTIME_MODE":
+                        "safe",
+                    "ROBINHOOD_LIVE_EXECUTION_ENABLED":
+                        "false",
+                },
+                base_dir=Path(
+                    directory
+                ),
+                client_factory=(
+                    client_factory
+                ),
+            ) as runtime:
+                self.assertIsInstance(
+                    runtime.equity_exit_reconciler,
+                    RobinhoodEquityExitReconciler,
+                )
+
+                self.assertFalse(
+                    runtime.live_execution_enabled
+                )
+
+            self.assertEqual(
+                len(clients),
+                1,
+            )
+
+            # Merely constructing the runtime must
+            # not perform exit close-confirmation reads.
+            self.assertEqual(
+                clients[0].calls,
+                [],
+            )
+
+    def test_runtime_exit_reconciliation_with_no_closing_positions_is_clean(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            clients = []
+
+            def client_factory(
+                server,
+            ):
+                client = FakeMCPClient(
+                    server
+                )
+                clients.append(
+                    client
+                )
+                return client
+
+            with open_robinhood_runtime(
+                account_number=(
+                    "agentic-account"
+                ),
+                not_found_grace_period=(
+                    timedelta(seconds=120)
+                ),
+                env={
+                    "STOCK_AGENT_RUNTIME_MODE":
+                        "safe",
+                    "ROBINHOOD_LIVE_EXECUTION_ENABLED":
+                        "false",
+                },
+                base_dir=Path(
+                    directory
+                ),
+                client_factory=(
+                    client_factory
+                ),
+            ) as runtime:
+                result = (
+                    runtime
+                    .equity_exit_reconciler
+                    .reconcile(
+                        account_number=(
+                            "agentic-account"
+                        )
+                    )
+                )
+
+                self.assertEqual(
+                    result,
+                    (),
+                )
+
+            self.assertEqual(
+                len(clients),
+                1,
+            )
+
+            # No CLOSING positions means no
+            # get_equity_orders call is necessary.
+            self.assertEqual(
+                clients[0].calls,
+                [],
+            )
