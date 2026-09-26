@@ -36,6 +36,7 @@ from stock_agent.orchestration.robinhood_equity_exit_cycle import (
     RobinhoodEquityExitCycleStatus,
     run_robinhood_equity_exit_cycle,
 )
+from stock_agent.domain import AssetType
 
 @dataclass(
     frozen=True,
@@ -259,6 +260,9 @@ def run_robinhood_equity_exit_cycle_from_runtime(
     monitor = TrailingStopMonitor(
         runtime.position_store,
         runtime.equity_quote_provider,
+        asset_type_filter=(
+            AssetType.EQUITY
+        ),
     )
 
     if runtime.live_execution_enabled:

@@ -12,6 +12,7 @@ from stock_agent.state import (
 from stock_agent.monitoring.outcomes import (
     PositionMonitorOutcome,
 )
+from stock_agent.domain import AssetType
 
 
 class TrailingStopMonitor:
@@ -19,19 +20,34 @@ class TrailingStopMonitor:
         self,
         store: PositionStateStore,
         quote_provider: QuoteProvider,
+        *,
+        asset_type_filter: AssetType | None = None,
     ) -> None:
         self._store = store
         self._quote_provider = quote_provider
+        self._asset_type_filter = (
+            asset_type_filter
+        )
 
     def process_position(
         self,
         position_id: str,
     ) -> TrailingStopEvaluation:
         state = self._store.get(position_id)
-
+        
         if state is None:
             raise PositionStateNotFoundError(
                 f"position state not found: {position_id}"
+            )
+
+        if (
+            self._asset_type_filter is not None
+            and state.asset_type
+            is not self._asset_type_filter
+        ):
+            raise ValueError(
+                "position asset type does not "
+                "match trailing stop monitor filter"
             )
 
         quote = self._quote_provider.get_quote(
@@ -69,6 +85,14 @@ class TrailingStopMonitor:
         outcomes: list[PositionMonitorOutcome] = []
 
         for state in states:
+            if (
+                self._asset_type_filter
+                is not None
+                and state.asset_type
+                is not self._asset_type_filter
+            ):
+                continue
+
             try:
                 evaluation = self.process_position(
                     state.position_id,

@@ -1031,6 +1031,135 @@ class TrailingStopMonitorTests(unittest.TestCase):
             outcome.evaluation.state.last_quote_at,
         )
 
+    def test_equity_filter_ignores_active_option(
+        self,
+    ) -> None:
+        equity_state = self.make_state()
+
+        option_state = replace(
+            equity_state,
+            position_id=(
+                "account-0000:"
+                "option:AAPL:option-order-1"
+            ),
+            asset_type=AssetType.OPTION,
+            opening_order_id=(
+                "option-order-1"
+            ),
+            option_id="option-1",
+        )
+
+        class Store:
+            def list_by_status(
+                self,
+                *,
+                account_number,
+                statuses,
+            ):
+                return [
+                    option_state,
+                ]
+
+            def get(
+                self,
+                position_id,
+            ):
+                raise AssertionError(
+                    "filtered option must not "
+                    "be processed"
+                )
+
+            def update(
+                self,
+                state,
+                *,
+                expected_version,
+            ):
+                raise AssertionError(
+                    "filtered option must not "
+                    "be updated"
+                )
+
+        class QuoteProvider:
+            def get_quote(
+                self,
+                symbol,
+            ):
+                raise AssertionError(
+                    "filtered option must not "
+                    "request equity quote"
+                )
+
+        monitor = TrailingStopMonitor(
+            Store(),
+            QuoteProvider(),
+            asset_type_filter=(
+                AssetType.EQUITY
+            ),
+        )
+
+        outcomes = (
+            monitor.monitor_active_positions(
+                account_number=(
+                    "account-0000"
+                )
+            )
+        )
+
+        self.assertEqual(
+            outcomes,
+            [],
+        )
+
+    def test_equity_filter_rejects_direct_option_processing(
+        self,
+    ) -> None:
+        option_state = replace(
+            self.make_state(),
+            position_id=(
+                "account-0000:"
+                "option:AAPL:option-order-1"
+            ),
+            asset_type=AssetType.OPTION,
+            opening_order_id=(
+                "option-order-1"
+            ),
+            option_id="option-1",
+        )
+
+        class Store:
+            def get(
+                self,
+                position_id,
+            ):
+                return option_state
+
+        class QuoteProvider:
+            def get_quote(
+                self,
+                symbol,
+            ):
+                raise AssertionError(
+                    "option must be rejected "
+                    "before quote read"
+                )
+
+        monitor = TrailingStopMonitor(
+            Store(),
+            QuoteProvider(),
+            asset_type_filter=(
+                AssetType.EQUITY
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "asset type",
+        ):
+            monitor.process_position(
+                option_state.position_id
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
