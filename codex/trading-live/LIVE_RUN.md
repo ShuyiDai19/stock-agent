@@ -1,21 +1,43 @@
 Use the robinhood-trading MCP to run exactly one autonomous live
-management/options cycle.
+options-management cycle.
 
 Read and obey AGENTS.override.md completely.
 
-This phase runs only after the production Python equity-entry runtime
-completed without submitting an equity opening order.
+This phase runs only after the production Python equity runtime
+completed with:
 
-The Python runtime exclusively owns all equity opening decisions and
-equity opening placement.
+EQUITY ENTRY CYCLE RESULT: NO ACTION
 
-You are NOT authorized to open an equity position.
+The production Python runtime exclusively owns all equity execution.
 
-Never review or place an equity BUY/opening order.
+Python owns:
+- equity opening decisions and placement
+- equity closing decisions and placement
+- equity trailing-stop monitoring
+- equity placement recovery
+- equity fill and activation reconciliation
+- equity closing reconciliation
+
+Codex has zero equity execution authority.
+
+Codex may read equity positions, equity orders, quotes, and account data
+when required for portfolio context or risk checks.
+
+Codex MUST NOT:
+- review an equity order
+- place an equity BUY
+- place an equity SELL
+- open an equity position
+- close an equity position
+- cancel or replace an equity order
+- retry an equity order
+- independently manage an equity position
+
+Codex execution authority is OPTIONS ONLY.
 
 This is a one-time live cycle, not a continuously running process.
 
-The task is authorized to place at most one real order without
+The task is authorized to place at most one real option order without
 interactive confirmation, but only when every applicable requirement in
 AGENTS.override.md passes.
 
@@ -29,32 +51,34 @@ Execution order:
 3. If any order is currently open:
    - Retrieve and report its current status.
    - Submit no additional order.
+   - Do not cancel, replace, or retry it.
 
-4. If an existing equity or option position exists:
-   - Evaluate all applicable exit requirements first.
-   - If an exit condition passes, review and submit at most one exact
-     closing order.
+4. If an existing equity position exists:
+   - Read and report it for portfolio and risk context only.
+   - Take no equity execution action.
+   - Do not evaluate, review, or place an equity closing order.
    - Do not evaluate or submit any new opening order.
-   - If no exit condition passes, monitor the position only.
 
-5. If there is no position and no open order:
+5. If an existing option position exists:
+   - Evaluate all applicable option exit requirements first.
+   - If an option exit condition passes, review and submit at most one
+     exact sell-to-close order.
+   - Do not evaluate or submit any new opening order.
+   - If no exit condition passes, monitor the option position only.
+
+6. If there is no position and no open order:
    - Confirm no opening order has already been submitted today.
-   - Equity opening is prohibited in this Codex phase.
    - You may evaluate an OPTIONS opening only when every options rule
      in AGENTS.override.md passes.
 
-6. For options, permit only:
+7. For options, permit only:
    - buy + open for one long call or long put
    - sell + close for a currently owned long call or long put
 
-7. For equities, permit only:
-   - sell + close of currently owned shares when an exit rule passes
-   - never buy/open an equity position
-
-8. Always review the exact permitted order immediately before
+8. Always review the exact permitted option order immediately before
    placement.
 
-9. Place only the exact order that was reviewed.
+9. Place only the exact option order that was reviewed.
 
 10. Retrieve and report the submitted order's actual status.
 

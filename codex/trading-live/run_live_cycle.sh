@@ -43,7 +43,7 @@ fi
 # Consume one-time authorization before any component can place an order.
 rm -f "$RUN_DIR/ARM_ONCE"
 
-echo "Running Python equity-entry runtime..."
+echo "Running Python equity runtime..."
 
 if ! (
   cd "$REPO_ROOT"
@@ -51,7 +51,7 @@ if ! (
   PYTHONPATH="$REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
     python -m stock_agent.runners.robinhood_equity_cycle
 ) > "$EQUITY_OUT" 2> "$EQUITY_ERR"; then
-  echo "Equity-entry runtime failed safely."
+  echo "Equity runtime failed safely."
   echo "Result:   $EQUITY_OUT"
   echo "Progress: $EQUITY_ERR"
   exit 1
@@ -62,6 +62,15 @@ EQUITY_RESULT="$(
 )"
 
 case "$EQUITY_RESULT" in
+  "EQUITY ENTRY CYCLE RESULT: CLOSING ORDER SUBMITTED")
+    echo
+    echo "Live cycle completed."
+    echo "$EQUITY_RESULT"
+    echo "Equity result:   $EQUITY_OUT"
+    echo "Equity progress: $EQUITY_ERR"
+    exit 0
+    ;;
+
   "EQUITY ENTRY CYCLE RESULT: OPENING ORDER SUBMITTED")
     echo
     echo "Live cycle completed."
@@ -72,8 +81,8 @@ case "$EQUITY_RESULT" in
     ;;
 
   "EQUITY ENTRY CYCLE RESULT: NO ACTION")
-    echo "No equity opening submitted."
-    echo "Continuing to Codex management/options phase."
+    echo "No equity order submitted."
+    echo "Continuing to Codex options-only phase."
     ;;
 
   "EQUITY ENTRY CYCLE RESULT: REVIEW ONLY")

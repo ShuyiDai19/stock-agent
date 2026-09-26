@@ -19,18 +19,37 @@ This workspace may place real trades with real money.
 - Treat the complete loss of one position as an accepted possible outcome.
 - Never add to a position, average down, roll a position, or pyramid exposure.
 
-## Permitted equity actions
+## Equity execution authority
 
-Equity positions must be fully paid and unleveraged.
+All equity execution is exclusively owned by the production Python
+runtime invoked by run_live_cycle.sh.
 
-Permitted equity actions are:
+Codex has zero equity execution authority.
 
-- equity opening: prohibited in Codex phase
-- equity closing: sell only currently owned shares
-- Use a regular-market-hours fractional market order when a whole share
-  costs more than $10.
-- Sell only equity shares currently owned in account 0000.
-- Never sell a quantity greater than the currently owned quantity.
+Codex may read equity positions, equity orders, quotes, and related
+account data when necessary for portfolio context and risk checks.
+
+Codex must never:
+
+- Review an equity order.
+
+- Place an equity buy/opening order.
+
+- Place an equity sell/closing order.
+
+- Cancel an equity order.
+
+- Replace an equity order.
+
+- Retry an equity order.
+
+- Independently manage an existing equity position.
+
+- Reproduce, bypass, or override the Python equity entry, monitoring,
+  exit, recovery, reconciliation, activation, or placement logic.
+
+If an equity action appears necessary, take no equity execution action.
+The production Python runtime is the sole equity execution authority.
 
 ## Permitted option actions
 
@@ -165,62 +184,141 @@ Reject the contract if the Robinhood review indicates:
 
 ## Exit requirements
 
-Evaluate exits before considering any new position.
+Evaluate permitted option exits before considering any new option
+position.
 
 For a long option, sell to close when any condition occurs:
 
 - Executable bid indicates a loss of 30% or more from entry.
+
 - Executable bid indicates a gain of 50% or more from entry.
+
 - Original directional trend is no longer valid.
+
 - Five trading days remain before expiration.
 
-For an equity position, sell the owned position when any condition occurs:
-
-- Executable price indicates a loss of 5% or more from entry.
-- Executable price indicates a gain of 8% or more from entry.
-- Price falls below the 20-day moving average.
-- Position has been held for 10 trading days.
-
-Closing requirements:
+Option closing requirements:
 
 - Option exits must be sell-to-close only.
-- Never sell more contracts or shares than are currently owned.
+
+- Never sell more contracts than are currently owned.
+
 - Do not open a replacement position in the same cycle.
+
 - Use fresh executable bid data when calculating option P&L.
+
 - Use a limit, good-for-day order for option exits.
-- Use a regular-hours order for equity exits.
+
+Equity exits are not authorized in the Codex phase.
+
+If an equity position exists:
+
+- Read and report it only for portfolio and risk context.
+
+- Do not evaluate an equity exit for execution.
+
+- Do not review an equity sell order.
+
+- Do not place an equity sell order.
+
+- Do not cancel, replace, or retry an equity order.
+
+Python exclusively owns equity exit monitoring and execution.
 
 ## Execution procedure
 
 1. Confirm account 0000 is agentic_allowed.
+
 2. Retrieve all required fresh account and market data.
+
 3. Inspect existing positions and open orders first.
-4. Manage an existing position before evaluating any option entry.
-5. Confirm no opening order has already been submitted today.
-6. Never evaluate, review, or place an equity opening order.
-7. If no position or open order exists, evaluate only permitted long-option entries.
-8. Select at most one permitted action.
-9. Call the applicable Robinhood review tool.
-10. Verify the reviewed account, instrument, side, position effect,
-    quantity, order type, price, debit, fees, collateral, and buying power.
-11. Place only the exact order that was reviewed.
-12. Generate one fresh idempotency UUID for the logical order.
-13. Reuse that UUID only for a retry of the same transport request.
-14. Immediately retrieve the submitted order and report its actual status.
-15. Never report an order as filled unless Robinhood reports filled.
-16. If submission status is uncertain, do not retry automatically.
-17. Never weaken, override, or reinterpret this policy.
 
-### Equity opening ownership
+4. If any order is currently open:
+   - Retrieve and report its status.
+   - Submit no additional order.
+   - Do not cancel, replace, or retry it.
 
-Equity opening orders are exclusively owned by the production Python
-runtime invoked by `run_live_cycle.sh`.
+5. If an equity position exists:
+   - Read and report it for portfolio and risk context only.
+   - Take no equity execution action.
+   - Do not evaluate any new opening order.
+
+6. If an option position exists:
+   - Evaluate its permitted exit rules first.
+   - If an option exit condition passes, consider at most one
+     sell-to-close order.
+   - Otherwise monitor the option position only.
+   - Do not evaluate a new opening order.
+
+7. Confirm no opening order has already been submitted today.
+
+8. If no position or open order exists, evaluate only permitted
+   long-option entries.
+
+9. Select at most one permitted option action.
+
+10. Call the applicable Robinhood option review tool.
+
+11. Verify the reviewed account, instrument, side, position effect,
+    quantity, order type, price, debit, fees, collateral, and buying
+    power.
+
+12. Place only the exact option order that was reviewed.
+
+13. Generate one fresh idempotency UUID for the logical option order.
+
+14. Reuse that UUID only for a retry of the same transport request.
+
+15. Immediately retrieve the submitted option order and report its
+    actual status.
+
+16. Never report an order as filled unless Robinhood reports filled.
+
+17. If submission status is uncertain, do not retry automatically.
+
+18. Never weaken, override, or reinterpret this policy.
+
+### Equity execution ownership
+
+All equity execution is exclusively owned by the production Python
+runtime invoked by run_live_cycle.sh.
+
+Python owns:
+
+- Equity opening decisions.
+
+- Equity opening placement.
+
+- Equity entry placement recovery.
+
+- Equity fill and activation reconciliation.
+
+- Equity trailing-stop monitoring.
+
+- Equity closing decisions.
+
+- Equity closing placement.
+
+- Equity closing recovery and reconciliation.
 
 In the Codex phase:
 
 - Never submit an equity buy/opening order.
-- Never review an equity buy order for later placement.
-- Equity sells are permitted only to close currently owned shares when
-  an exit rule passes.
-- Do not attempt to reproduce, bypass, or override the Python equity
-  entry strategy, recovery, activation, preflight, or placement path.
+
+- Never submit an equity sell/closing order.
+
+- Never review an equity order for later placement.
+
+- Never cancel or replace an equity order.
+
+- Never retry an equity order.
+
+- Never independently manage an existing equity position.
+
+- Equity information may be read only for portfolio context and risk
+  checks.
+
+- Do not attempt to reproduce, bypass, or override any Python equity
+  execution path.
+
+Codex execution authority is options only.

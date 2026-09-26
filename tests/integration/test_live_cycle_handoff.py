@@ -406,7 +406,7 @@ exit "${FAKE_CODEX_EXIT:-0}"
             ).exists()
         )
 
-    def test_codex_prompt_forbids_equity_opening(
+    def test_codex_prompt_forbids_all_equity_execution(
         self,
     ) -> None:
         raw_prompt = (
@@ -424,37 +424,54 @@ exit "${FAKE_CODEX_EXIT:-0}"
 
         self.assertIn(
             (
-                "The Python runtime exclusively owns "
-                "all equity opening decisions"
+                "The production Python runtime "
+                "exclusively owns all equity execution."
             ),
             prompt,
         )
 
         self.assertIn(
             (
-                "You are NOT authorized to open "
-                "an equity position."
+                "Codex has zero equity "
+                "execution authority."
             ),
             prompt,
         )
 
         self.assertIn(
+            "place an equity BUY",
+            prompt,
+        )
+
+        self.assertIn(
+            "place an equity SELL",
+            prompt,
+        )
+
+        self.assertIn(
             (
-                "Never review or place an equity "
-                "BUY/opening order."
+                "Codex execution authority "
+                "is OPTIONS ONLY."
             ),
             prompt,
         )
 
         self.assertNotIn(
             (
-                "Submit at most one qualifying "
-                "opening order."
+                "For equities, permit only:"
             ),
             prompt,
         )
 
-    def test_workspace_policy_forbids_codex_equity_opening(
+        self.assertNotIn(
+            (
+                "sell + close of currently "
+                "owned shares"
+            ),
+            prompt,
+        )
+
+    def test_workspace_policy_forbids_all_codex_equity_execution(
         self,
     ) -> None:
         raw_policy = (
@@ -472,8 +489,16 @@ exit "${FAKE_CODEX_EXIT:-0}"
 
         self.assertIn(
             (
-                "Equity opening orders are exclusively "
+                "All equity execution is exclusively "
                 "owned by the production Python runtime"
+            ),
+            policy,
+        )
+
+        self.assertIn(
+            (
+                "Codex has zero equity "
+                "execution authority."
             ),
             policy,
         )
@@ -488,24 +513,76 @@ exit "${FAKE_CODEX_EXIT:-0}"
 
         self.assertIn(
             (
-                "equity opening: prohibited "
-                "in Codex phase"
+                "Never submit an equity "
+                "sell/closing order."
+            ),
+            policy,
+        )
+
+        self.assertIn(
+            (
+                "Codex execution authority "
+                "is options only."
             ),
             policy,
         )
 
         self.assertNotIn(
             (
-                "A fully-paid equity entry "
-                "requires"
+                "Equity sells are permitted"
             ),
             policy,
         )
 
-        self.assertNotIn( "A fully-paid equity entry requires", policy, ) 
-        
-        self.assertNotIn( "buy eligible stock", policy.lower(), )
-        
+        self.assertNotIn(
+            (
+                "equity closing: sell only "
+                "currently owned shares"
+            ),
+            policy,
+        )
+
+        self.assertNotIn(
+            "buy eligible stock",
+            policy.lower(),
+        )
+
+    def test_equity_closing_submission_stops_before_codex(
+        self,
+    ) -> None:
+        self._arm()
+
+        result = self._run(
+            FAKE_EQUITY_RESULT=(
+                "EQUITY ENTRY CYCLE RESULT: "
+                "CLOSING ORDER SUBMITTED"
+            )
+        )
+
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=result.stderr,
+        )
+
+        self.assertFalse(
+            self.codex_marker.exists()
+        )
+
+        self.assertFalse(
+            (
+                self.live_dir
+                / "ARM_ONCE"
+            ).exists()
+        )
+
+        self.assertIn(
+            (
+                "EQUITY ENTRY CYCLE RESULT: "
+                "CLOSING ORDER SUBMITTED"
+            ),
+            result.stdout,
+        )      
 
 
 if __name__ == "__main__":
