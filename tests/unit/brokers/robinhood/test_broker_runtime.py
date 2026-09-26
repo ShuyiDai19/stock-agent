@@ -246,6 +246,98 @@ class RecoveryFailingFakeMCPClient:
             "simulated reconciliation failure"
         )
 
+class UnknownExitRecoveryInvoker:
+    def __init__(
+        self,
+    ) -> None:
+        self.calls = []
+
+    def call_tool(
+        self,
+        tool_name,
+        arguments,
+    ):
+        self.calls.append(
+            (
+                tool_name,
+                dict(arguments),
+            )
+        )
+
+        if tool_name != "get_equity_orders":
+            raise AssertionError(
+                f"unexpected MCP tool: {tool_name}"
+            )
+
+        # Broker returns an equity order candidate,
+        # but there is no exact matching ref_id.
+        #
+        # This must remain UNKNOWN / UNCERTAIN.
+        return {
+            "data": {
+                "orders": [
+                    {
+                        "id": (
+                            "some-other-broker-order"
+                        ),
+                        "symbol": "AAPL",
+                        "side": "sell",
+                        "type": "market",
+                        "quantity": "0.031",
+                        # Intentionally no matching ref_id.
+                    }
+                ],
+                "next": None,
+            }
+        }
+
+class FoundExitRecoveryInvoker:
+    def __init__(
+        self,
+        *,
+        ref_id: str,
+        broker_order_id: str,
+    ) -> None:
+        self._ref_id = ref_id
+        self._broker_order_id = (
+            broker_order_id
+        )
+        self.calls = []
+
+    def call_tool(
+        self,
+        tool_name,
+        arguments,
+    ):
+        self.calls.append(
+            (
+                tool_name,
+                dict(arguments),
+            )
+        )
+
+        if tool_name != "get_equity_orders":
+            raise AssertionError(
+                f"unexpected MCP tool: {tool_name}"
+            )
+
+        return {
+            "data": {
+                "orders": [
+                    {
+                        "id": (
+                            self._broker_order_id
+                        ),
+                        "symbol": "AAPL",
+                        "ref_id": (
+                            self._ref_id
+                        ),
+                    }
+                ],
+                "next": None,
+            }
+        }
+
 class RobinhoodBrokerRuntimeTests(
     unittest.TestCase
 ):
@@ -744,129 +836,6 @@ class RobinhoodBrokerRuntimeTests(
                 [],
             )
 
-    # def test_runtime_allows_live_when_recovery_is_clean(
-    #     self,
-    # ) -> None:
-    #     with tempfile.TemporaryDirectory() as directory:
-    #         journal = (
-    #             SQLitePlacementAttemptJournal(
-    #                 Path(directory)
-    #                 / "placement.sqlite3"
-    #             )
-    #         )
-    #         journal.initialize()
-
-    #         clients = []
-
-    #         def factory(server):
-    #             client = FakeMCPClient(
-    #                 server
-    #             )
-    #             clients.append(client)
-    #             return client
-
-    #         with open_robinhood_runtime(
-    #             account_number="agentic-account",
-    #             placement_journal=journal,
-    #             not_found_grace_period=(
-    #                 timedelta(0)
-    #             ),
-    #             env={
-    #                 "ROBINHOOD_LIVE_EXECUTION_ENABLED":
-    #                     "true",
-    #                 "STOCK_AGENT_RUNTIME_MODE":
-    #                     "live",
-    #             },
-    #             client_factory=factory,
-    #         ) as runtime:
-    #             self.assertTrue(
-    #                 runtime
-    #                 .live_execution_requested
-    #             )
-
-    #             self.assertTrue(
-    #                 runtime
-    #                 .live_execution_enabled
-    #             )
-
-    #             self.assertEqual(
-    #                 runtime
-    #                 .recovery
-    #                 .unresolved_attempt_count,
-    #                 0,
-    #             )
-
-    # def test_runtime_blocks_live_when_recovery_remains_unresolved(
-    #     self,
-    # ) -> None:
-    #     submission = self.make_submission()
-
-    #     with tempfile.TemporaryDirectory() as directory:
-    #         journal = (
-    #             SQLitePlacementAttemptJournal(
-    #                 Path(directory)
-    #                 / "placement.sqlite3"
-    #             )
-    #         )
-    #         journal.initialize()
-
-    #         journal.insert(
-    #             PlacementAttemptRecord(
-    #                 submission=submission,
-    #                 attempted_at=datetime.now(
-    #                     timezone.utc
-    #                 ),
-    #                 status=(
-    #                     PlacementAttemptStatus
-    #                     .PREPARED
-    #                 ),
-    #             )
-    #         )
-
-    #         def factory(server):
-    #             return (
-    #                 RecoveryFailingFakeMCPClient(
-    #                     server
-    #                 )
-    #             )
-
-    #         with open_robinhood_runtime(
-    #             account_number="agentic-account",
-    #             placement_journal=journal,
-    #             not_found_grace_period=(
-    #                 timedelta(0)
-    #             ),
-    #             env={
-    #                 "ROBINHOOD_LIVE_EXECUTION_ENABLED":
-    #                     "true",
-    #                 "STOCK_AGENT_RUNTIME_MODE":
-    #                     "live",
-    #             },
-    #             client_factory=factory,
-    #         ) as runtime:
-    #             self.assertTrue(
-    #                 runtime
-    #                 .live_execution_requested
-    #             )
-
-    #             self.assertFalse(
-    #                 runtime
-    #                 .live_execution_enabled
-    #             )
-
-    #             self.assertEqual(
-    #                 runtime
-    #                 .recovery
-    #                 .unresolved_attempt_count,
-    #                 1,
-    #             )
-
-    #             with self.assertRaises(
-    #                 LiveExecutionDisabledError
-    #             ):
-    #                 runtime.broker.submit_exit_order(
-    #                     submission
-    #                 )
 
     def test_startup_recovery_is_clean_when_journal_is_empty(
         self,
@@ -1557,4 +1526,502 @@ class RobinhoodBrokerRuntimeTests(
             self.assertEqual(
                 clients[0].calls,
                 [],
+            )
+
+    def test_uncertain_exit_remains_unresolved_after_inconclusive_startup_recovery(
+        self,
+    ) -> None:
+        attempted_at = datetime(
+            2026,
+            9,
+            26,
+            18,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        ref_id = (
+            "123e4567-e89b-12d3-a456-426614174111"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            journal = (
+                SQLitePlacementAttemptJournal(
+                    Path(directory)
+                    / "placement.sqlite3"
+                )
+            )
+
+            journal.initialize()
+
+            submission = (
+                RobinhoodExitSubmission(
+                    request=(
+                        RobinhoodExitOrderRequest(
+                            position_id=(
+                                "account-0000:"
+                                "equity:AAPL:"
+                                "opening-order-1"
+                            ),
+                            account_number=(
+                                "account-0000"
+                            ),
+                            asset_type=(
+                                AssetType.EQUITY
+                            ),
+                            symbol="AAPL",
+                            quantity=Decimal(
+                                "0.031"
+                            ),
+                            action=(
+                                RobinhoodExitAction
+                                .EQUITY_SELL
+                            ),
+                            option_id=None,
+                        )
+                    ),
+                    ref_id=ref_id,
+                    order_type=(
+                        RobinhoodOrderType
+                        .MARKET
+                    ),
+                    time_in_force=(
+                        RobinhoodTimeInForce
+                        .GFD
+                    ),
+                    market_hours=(
+                        RobinhoodMarketHours
+                        .REGULAR_HOURS
+                    ),
+                    limit_price=None,
+                )
+            )
+
+            # Reproduce the durable state left after
+            # an ambiguous placement attempt.
+            journal.insert(
+                PlacementAttemptRecord(
+                    submission=submission,
+                    placement_attempted_at=(
+                        attempted_at
+                    ),
+                    status=(
+                        PlacementAttemptStatus
+                        .PREPARED
+                    ),
+                )
+            )
+
+            journal.transition(
+                ref_id,
+                expected_status=(
+                    PlacementAttemptStatus
+                    .PREPARED
+                ),
+                new_status=(
+                    PlacementAttemptStatus
+                    .SUBMITTING
+                ),
+            )
+
+            journal.transition(
+                ref_id,
+                expected_status=(
+                    PlacementAttemptStatus
+                    .SUBMITTING
+                ),
+                new_status=(
+                    PlacementAttemptStatus
+                    .UNCERTAIN
+                ),
+            )
+
+            before_recovery = (
+                journal.list_unresolved()
+            )
+
+            self.assertEqual(
+                len(before_recovery),
+                1,
+            )
+
+            self.assertEqual(
+                before_recovery[0].status,
+                PlacementAttemptStatus
+                .UNCERTAIN,
+            )
+
+            invoker = (
+                UnknownExitRecoveryInvoker()
+            )
+
+            recovery = (
+                run_robinhood_startup_recovery(
+                    invoker=invoker,
+                    placement_journal=(
+                        journal
+                    ),
+                    not_found_grace_period=(
+                        timedelta(seconds=120)
+                    ),
+                )
+            )
+
+            # Startup recovery must NOT treat an
+            # inconclusive lookup as safe.
+            self.assertTrue(
+                recovery.has_unresolved_attempts
+            )
+
+            self.assertEqual(
+                recovery.unresolved_attempt_count,
+                1,
+            )
+
+            self.assertEqual(
+                len(recovery.results),
+                1,
+            )
+
+            # Most important persistent-state assertion:
+            # UNCERTAIN remains UNCERTAIN.
+            unresolved_after = (
+                journal.list_unresolved()
+            )
+
+            self.assertEqual(
+                len(unresolved_after),
+                1,
+            )
+
+            self.assertEqual(
+                unresolved_after[
+                    0
+                ].status,
+                PlacementAttemptStatus
+                .UNCERTAIN,
+            )
+
+            self.assertEqual(
+                unresolved_after[
+                    0
+                ].submission.ref_id,
+                ref_id,
+            )
+
+            # It must not have been converted into a
+            # resolved/acknowledged placement.
+            self.assertEqual(
+                journal.list_resolved(),
+                [],
+            )
+
+            # Recovery looked only for the original
+            # equity SELL provenance.
+            self.assertEqual(
+                invoker.calls,
+                [
+                    (
+                        "get_equity_orders",
+                        {
+                            "account_number":
+                                "account-0000",
+                            "symbol":
+                                "AAPL",
+                            "placed_agent":
+                                "agentic",
+                        },
+                    )
+                ],
+            )
+
+    def test_uncertain_exit_exact_ref_recovery_clears_startup_block(
+        self,
+    ) -> None:
+        attempted_at = datetime(
+            2026,
+            9,
+            26,
+            18,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        ref_id = (
+            "123e4567-e89b-12d3-a456-426614174222"
+        )
+
+        broker_order_id = (
+            "broker-recovered-exit-1"
+        )
+
+        account_number = (
+            "account-0000"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            journal = (
+                SQLitePlacementAttemptJournal(
+                    Path(directory)
+                    / "placement.sqlite3"
+                )
+            )
+
+            journal.initialize()
+
+            submission = (
+                RobinhoodExitSubmission(
+                    request=(
+                        RobinhoodExitOrderRequest(
+                            position_id=(
+                                "account-0000:"
+                                "equity:AAPL:"
+                                "opening-order-1"
+                            ),
+                            account_number=(
+                                account_number
+                            ),
+                            asset_type=(
+                                AssetType.EQUITY
+                            ),
+                            symbol="AAPL",
+                            quantity=Decimal(
+                                "0.031"
+                            ),
+                            action=(
+                                RobinhoodExitAction
+                                .EQUITY_SELL
+                            ),
+                            option_id=None,
+                        )
+                    ),
+                    ref_id=ref_id,
+                    order_type=(
+                        RobinhoodOrderType
+                        .MARKET
+                    ),
+                    time_in_force=(
+                        RobinhoodTimeInForce
+                        .GFD
+                    ),
+                    market_hours=(
+                        RobinhoodMarketHours
+                        .REGULAR_HOURS
+                    ),
+                    limit_price=None,
+                )
+            )
+
+            # ---------------------------------------------
+            # Reproduce an old exit whose placement result
+            # was uncertain when the previous process died.
+            # ---------------------------------------------
+
+            journal.insert(
+                PlacementAttemptRecord(
+                    submission=submission,
+                    placement_attempted_at=(
+                        attempted_at
+                    ),
+                    status=(
+                        PlacementAttemptStatus
+                        .PREPARED
+                    ),
+                )
+            )
+
+            journal.transition(
+                ref_id,
+                expected_status=(
+                    PlacementAttemptStatus
+                    .PREPARED
+                ),
+                new_status=(
+                    PlacementAttemptStatus
+                    .SUBMITTING
+                ),
+            )
+
+            journal.transition(
+                ref_id,
+                expected_status=(
+                    PlacementAttemptStatus
+                    .SUBMITTING
+                ),
+                new_status=(
+                    PlacementAttemptStatus
+                    .UNCERTAIN
+                ),
+            )
+
+            unresolved_before = (
+                journal.list_unresolved()
+            )
+
+            self.assertEqual(
+                len(unresolved_before),
+                1,
+            )
+
+            self.assertEqual(
+                unresolved_before[
+                    0
+                ].status,
+                PlacementAttemptStatus
+                .UNCERTAIN,
+            )
+
+            # ---------------------------------------------
+            # Startup recovery finds the ORIGINAL order
+            # through an exact ref_id match.
+            # ---------------------------------------------
+
+            invoker = (
+                FoundExitRecoveryInvoker(
+                    ref_id=ref_id,
+                    broker_order_id=(
+                        broker_order_id
+                    ),
+                )
+            )
+
+            recovery = (
+                run_robinhood_startup_recovery(
+                    invoker=invoker,
+                    placement_journal=(
+                        journal
+                    ),
+                    not_found_grace_period=(
+                        timedelta(
+                            seconds=120
+                        )
+                    ),
+                )
+            )
+
+            # ---------------------------------------------
+            # Exact recovery resolves the startup blocker.
+            # ---------------------------------------------
+
+            self.assertFalse(
+                recovery.has_unresolved_attempts
+            )
+
+            self.assertEqual(
+                recovery.unresolved_attempt_count,
+                0,
+            )
+
+            self.assertEqual(
+                len(recovery.results),
+                1,
+            )
+
+            self.assertIsNone(
+                recovery.results[
+                    0
+                ].error
+            )
+
+            self.assertIsNone(
+                recovery.results[
+                    0
+                ].persistence_error
+            )
+
+            # ---------------------------------------------
+            # Durable state must now be RECOVERED.
+            # ---------------------------------------------
+
+            persisted = journal.get(
+                ref_id
+            )
+
+            self.assertIsNotNone(
+                persisted
+            )
+
+            self.assertEqual(
+                persisted.status,
+                PlacementAttemptStatus
+                .RECOVERED,
+            )
+
+            self.assertIsNone(
+                persisted.acknowledgement
+            )
+
+            self.assertIsNotNone(
+                persisted.recovery_evidence
+            )
+
+            self.assertEqual(
+                persisted
+                .recovery_evidence
+                .broker_order_id,
+                broker_order_id,
+            )
+
+            # ---------------------------------------------
+            # The old placement is no longer unresolved,
+            # but remains durable as resolved provenance.
+            # ---------------------------------------------
+
+            self.assertEqual(
+                journal.list_unresolved(),
+                [],
+            )
+
+            resolved = (
+                journal.list_resolved()
+            )
+
+            self.assertEqual(
+                len(resolved),
+                1,
+            )
+
+            self.assertEqual(
+                resolved[
+                    0
+                ].status,
+                PlacementAttemptStatus
+                .RECOVERED,
+            )
+
+            self.assertEqual(
+                resolved[
+                    0
+                ].submission.ref_id,
+                ref_id,
+            )
+
+            self.assertEqual(
+                resolved[
+                    0
+                ].recovery_evidence
+                .broker_order_id,
+                broker_order_id,
+            )
+
+            # ---------------------------------------------
+            # Recovery must have queried exactly the old
+            # equity placement provenance.
+            # ---------------------------------------------
+
+            self.assertEqual(
+                invoker.calls,
+                [
+                    (
+                        "get_equity_orders",
+                        {
+                            "account_number":
+                                account_number,
+                            "symbol":
+                                "AAPL",
+                            "placed_agent":
+                                "agentic",
+                        },
+                    )
+                ],
             )

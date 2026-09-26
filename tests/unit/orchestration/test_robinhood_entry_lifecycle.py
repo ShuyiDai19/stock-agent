@@ -34,6 +34,9 @@ from stock_agent.state import (
 from stock_agent.strategy.universe import (
     EquityUniverseScreeningPolicy,
 )
+from stock_agent.orchestration.equity_entry_preflight import (
+    EquityEntryPreflightSnapshot,
+)
 
 
 _REF_ID = (
@@ -314,6 +317,22 @@ class ExplodingPlacer:
             "must prevent duplicate placement"
         )
 
+class CleanPreflightReader:
+    def read(
+        self,
+        *,
+        account_number,
+        evaluated_at,
+    ):
+        return EquityEntryPreflightSnapshot(
+            has_existing_position=False,
+            has_open_equity_order=False,
+            has_open_option_order=False,
+            has_opening_order_today=False,
+            buying_power=Decimal("90"),
+            cash=Decimal("90"),
+        )
+
 
 class RobinhoodEntryLifecycleTests(
     unittest.TestCase
@@ -418,8 +437,13 @@ class RobinhoodEntryLifecycleTests(
                             ),
                         )
                     ),
-                    evaluated_at=(
-                        _RECOVERED_AT
+                    evaluated_at=datetime(
+                        2026,
+                        9,
+                        18,
+                        14,
+                        30,
+                        tzinfo=timezone.utc,
                     ),
                     execution_mode=(
                         EquityEntryExecutionMode
@@ -433,6 +457,12 @@ class RobinhoodEntryLifecycleTests(
                     ),
                     activation_reconciler=(
                         activation_reconciler
+                    ),
+                    preflight_reader=(
+                        CleanPreflightReader()
+                    ),
+                    preflight_opening_debit=(
+                        Decimal("10")
                     ),
                 )
             )
