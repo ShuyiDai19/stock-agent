@@ -15,6 +15,121 @@ from stock_agent.orchestration.robinhood_strategy_cycle import (
 from stock_agent.strategy.universe import (
     EquityUniverseScreeningPolicy,
 )
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from stock_agent.brokers.robinhood.exit_executor import (
+    DryRunRobinhoodExitExecutor,
+    LiveRobinhoodExitExecutor,
+)
+from stock_agent.execution import (
+    ExitExecutionService,
+)
+from stock_agent.monitoring.trailing_stop_monitor import (
+    TrailingStopMonitor,
+)
+from stock_agent.orchestration.exit_execution import (
+    ExitExecutionCoordinator,
+)
+from stock_agent.orchestration.robinhood_equity_exit_cycle import (
+    RobinhoodEquityExitCycleResult,
+    RobinhoodEquityExitCycleStatus,
+    run_robinhood_equity_exit_cycle,
+)
+
+@dataclass(
+    frozen=True,
+    slots=True,
+)
+class RobinhoodEquityRuntimeCycleResult:
+    exit_result: (
+        RobinhoodEquityExitCycleResult
+    )
+    entry_result: Any | None
+
+    def __post_init__(
+        self,
+    ) -> None:
+        exit_actionable = (
+            self.exit_result.status
+            is not RobinhoodEquityExitCycleStatus
+            .NO_ACTION
+        )
+
+        if (
+            exit_actionable
+            and self.entry_result is not None
+        ):
+            raise ValueError(
+                "entry cycle cannot run after "
+                "an actionable equity exit"
+            )
+
+        if (
+            not exit_actionable
+            and self.entry_result is None
+        ):
+            raise ValueError(
+                "entry result is required when "
+                "exit cycle has no action"
+            )
+
+    @property
+    def exit_order_submitted(
+        self,
+    ) -> bool:
+        return (
+            self.exit_result.status
+            is RobinhoodEquityExitCycleStatus
+            .SUBMITTED
+        )
+
+    @property
+    def exit_previewed(
+        self,
+    ) -> bool:
+        return (
+            self.exit_result.status
+            is RobinhoodEquityExitCycleStatus
+            .PREVIEWED
+        )
+
+    @property
+    def entry_order_submitted(
+        self,
+    ) -> bool:
+        if self.entry_result is None:
+            return False
+
+        return (
+            self.entry_result
+            .placement_count
+            > 0
+        )
+
+    @property
+    def placement_count(
+        self,
+    ) -> int:
+        if self.entry_result is None:
+            return 0
+
+        return (
+            self.entry_result
+            .placement_count
+        )
+
+    @property
+    def placement_failure_count(
+        self,
+    ) -> int:
+        if self.entry_result is None:
+            return 0
+
+        return (
+            self.entry_result
+            .placement_failure_count
+        )
 
 
 def run_robinhood_equity_cycle_from_runtime(
@@ -24,7 +139,36 @@ def run_robinhood_equity_cycle_from_runtime(
     universe_policy: EquityUniverseScreeningPolicy,
     evaluated_at: datetime,
     budget: Decimal = DEFAULT_ENTRY_BUDGET,
-) -> RobinhoodEquityCycleRunOutcome:
+    exit_cycle_runner=None,
+    entry_cycle_runner=None,
+) -> RobinhoodEquityRuntimeCycleResult:
+    if exit_cycle_runner is None:
+        exit_cycle_runner = (
+            run_robinhood_equity_exit_cycle_from_runtime
+        )
+
+    if entry_cycle_runner is None:
+        entry_cycle_runner = (
+            run_robinhood_equity_strategy_cycle_from_store
+        )
+
+    exit_result = exit_cycle_runner(
+        runtime,
+        evaluated_at=evaluated_at,
+    )
+
+    if (
+        exit_result.status
+        is not RobinhoodEquityExitCycleStatus
+        .NO_ACTION
+    ):
+        return (
+            RobinhoodEquityRuntimeCycleResult(
+                exit_result=exit_result,
+                entry_result=None,
+            )
+        )
+
     if runtime.live_execution_enabled:
         if runtime.entry_placer is None:
             raise RuntimeError(
@@ -72,8 +216,8 @@ def run_robinhood_equity_cycle_from_runtime(
         preflight_reader = None
         preflight_opening_debit = None
 
-    return (
-        run_robinhood_equity_strategy_cycle_from_store(
+    entry_result = (
+        entry_cycle_runner(
             runtime._strategy_invoker,
             runtime.position_store,
             account_number=(
@@ -96,6 +240,67 @@ def run_robinhood_equity_cycle_from_runtime(
             ),
             preflight_opening_debit=(
                 preflight_opening_debit
+            ),
+        )
+    )
+
+    return (
+        RobinhoodEquityRuntimeCycleResult(
+            exit_result=exit_result,
+            entry_result=entry_result,
+        )
+    )
+
+def run_robinhood_equity_exit_cycle_from_runtime(
+    runtime,
+    *,
+    evaluated_at,
+) -> RobinhoodEquityExitCycleResult:
+    monitor = TrailingStopMonitor(
+        runtime.position_store,
+        runtime.equity_quote_provider,
+    )
+
+    if runtime.live_execution_enabled:
+        executor = (
+            LiveRobinhoodExitExecutor(
+                runtime.broker,
+                runtime
+                .equity_exit_price_provider,
+            )
+        )
+    else:
+        executor = (
+            DryRunRobinhoodExitExecutor(
+                clock=lambda: evaluated_at,
+            )
+        )
+
+    execution_service = (
+        ExitExecutionService(
+            executor
+        )
+    )
+
+    execution_coordinator = (
+        ExitExecutionCoordinator(
+            execution_service,
+            runtime.position_store,
+        )
+    )
+
+    return (
+        run_robinhood_equity_exit_cycle(
+            account_number=(
+                runtime.account_number
+            ),
+            reconciler=(
+                runtime
+                .equity_exit_reconciler
+            ),
+            monitor=monitor,
+            execution_coordinator=(
+                execution_coordinator
             ),
         )
     )

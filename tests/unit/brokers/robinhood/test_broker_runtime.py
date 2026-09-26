@@ -48,6 +48,12 @@ from stock_agent.brokers.robinhood.entry_preflight_reader import (
 from stock_agent.brokers.robinhood.equity_exit_reconciler import (
     RobinhoodEquityExitReconciler,
 )
+from stock_agent.brokers.robinhood.mcp_quote_provider import (
+    MCPRobinhoodEquityQuoteProvider,
+)
+from stock_agent.brokers.robinhood.equity_exit_price_provider import (
+    RobinhoodEquityExitPriceProvider,
+)
 
 
     
@@ -1477,6 +1483,16 @@ class RobinhoodBrokerRuntimeTests(
             self.assertEqual(
                 clients[0].calls,
                 [],
+            )
+
+            self.assertIsInstance(
+                runtime.equity_quote_provider,
+                MCPRobinhoodEquityQuoteProvider,
+            )
+
+            self.assertIsInstance(
+                runtime.equity_exit_price_provider,
+                RobinhoodEquityExitPriceProvider,
             )
 
     def test_runtime_exit_reconciliation_with_no_closing_positions_is_clean(

@@ -74,6 +74,9 @@ from stock_agent.state import (
 from stock_agent.brokers.robinhood.mcp import (
     MCPToolInvoker,
 )
+from stock_agent.brokers.robinhood.equity_exit_price_provider import (
+    RobinhoodEquityExitPriceProvider,
+)
 
 
 ROBINHOOD_LIVE_EXECUTION_ENV = (
@@ -484,6 +487,13 @@ class RobinhoodRuntimeSession:
     equity_exit_reconciler: (
         RobinhoodEquityExitReconciler
     )
+    equity_quote_provider: (
+        MCPRobinhoodEquityQuoteProvider
+    )
+
+    equity_exit_price_provider: (
+        RobinhoodEquityExitPriceProvider
+    )
 
     # Entry lifecycle.
     entry_placement_journal: (
@@ -755,9 +765,15 @@ def open_robinhood_runtime(
             )
         )
 
-        entry_quote_provider = (
+        equity_quote_provider = (
             MCPRobinhoodEquityQuoteProvider(
                 invoker
+            )
+        )
+
+        equity_exit_price_provider = (
+            RobinhoodEquityExitPriceProvider(
+                equity_quote_provider
             )
         )
 
@@ -766,7 +782,7 @@ def open_robinhood_runtime(
                 invoker,
                 entry_journal,
                 runtime_position_store,
-                entry_quote_provider,
+                equity_quote_provider,
             )
         )
 
@@ -854,6 +870,12 @@ def open_robinhood_runtime(
             recovery=recovery,
             equity_exit_reconciler=(
                 equity_exit_reconciler
+            ),
+            equity_quote_provider=(
+                equity_quote_provider
+            ),
+            equity_exit_price_provider=(
+                equity_exit_price_provider
             ),
             entry_placement_journal=(
                 entry_journal
