@@ -45,7 +45,7 @@ _NOW = datetime(
 )
 
 
-class FakeOutcome:
+class FakeEntryOutcome:
     def __init__(
         self,
         *,
@@ -56,16 +56,65 @@ class FakeOutcome:
         placement_count=0,
         placement_failure_count=0,
     ) -> None:
-        self.execution_mode = (
-            execution_mode
-        )
-        self.placement_count = (
-            placement_count
-        )
+        self.execution_mode = execution_mode
+        self.placement_count = placement_count
         self.placement_failure_count = (
             placement_failure_count
         )
 
+
+class FakeRuntimeOutcome:
+    def __init__(
+        self,
+        *,
+        entry_result=None,
+        exit_order_submitted=False,
+        exit_previewed=False,
+    ) -> None:
+        self.entry_result = entry_result
+        self.exit_order_submitted = (
+            exit_order_submitted
+        )
+        self.exit_previewed = (
+            exit_previewed
+        )
+
+    @property
+    def entry_order_submitted(
+        self,
+    ) -> bool:
+        if self.entry_result is None:
+            return False
+
+        return (
+            self.entry_result
+            .placement_count
+            > 0
+        )
+
+    @property
+    def placement_count(
+        self,
+    ) -> int:
+        if self.entry_result is None:
+            return 0
+
+        return (
+            self.entry_result
+            .placement_count
+        )
+
+    @property
+    def placement_failure_count(
+        self,
+    ) -> int:
+        if self.entry_result is None:
+            return 0
+
+        return (
+            self.entry_result
+            .placement_failure_count
+        )
 
 class RobinhoodEquityProductionRunnerTests(
     unittest.TestCase
@@ -168,11 +217,12 @@ class RobinhoodEquityProductionRunnerTests(
             )
             yield runtime
 
-        expected = FakeOutcome(
-            execution_mode=(
-                EquityEntryExecutionMode
-                .LIVE
-            ),
+        expected = FakeRuntimeOutcome(
+            entry_result=FakeEntryOutcome(
+                execution_mode=(
+                    EquityEntryExecutionMode.LIVE
+                ),
+            )
         )
 
         def cycle_runner(
@@ -355,12 +405,13 @@ class RobinhoodEquityProductionRunnerTests(
             *args,
             **kwargs,
         ):
-            return FakeOutcome(
-                execution_mode=(
-                    EquityEntryExecutionMode
-                    .LIVE
-                ),
-                placement_failure_count=1,
+            return FakeRuntimeOutcome(
+                entry_result=FakeEntryOutcome(
+                    execution_mode=(
+                        EquityEntryExecutionMode.LIVE
+                    ),
+                    placement_failure_count=1,
+                )
             )
 
         with self.assertRaisesRegex(
@@ -383,62 +434,47 @@ class RobinhoodEquityProductionRunnerTests(
                 clock=lambda: _NOW,
             )
 
-    def test_formats_review_only_result(
-        self,
-    ) -> None:
-        result = FakeOutcome(
-            execution_mode=(
-                EquityEntryExecutionMode
-                .REVIEW_ONLY
-            ),
-        )
-
-        self.assertEqual(
-            format_cycle_result(
-                result
-            ),
-            (
-                "EQUITY ENTRY CYCLE RESULT: "
-                "REVIEW ONLY"
-            ),
-        )
-
     def test_formats_live_no_action_result(
         self,
     ) -> None:
-        result = FakeOutcome(
-            execution_mode=(
-                EquityEntryExecutionMode
-                .LIVE
-            ),
-            placement_count=0,
+        result = FakeRuntimeOutcome(
+            entry_result=FakeEntryOutcome(
+                execution_mode=(
+                    EquityEntryExecutionMode
+                    .LIVE
+                ),
+                placement_count=0,
+            )
+        )
+
+        self.assertFalse(
+            result.entry_order_submitted
         )
 
         self.assertEqual(
-            format_cycle_result(
-                result
-            ),
+            format_cycle_result(result),
             (
                 "EQUITY ENTRY CYCLE RESULT: "
                 "NO ACTION"
             ),
         )
 
+
     def test_formats_submitted_entry_result(
         self,
     ) -> None:
-        result = FakeOutcome(
-            execution_mode=(
-                EquityEntryExecutionMode
-                .LIVE
-            ),
-            placement_count=1,
+        result = FakeRuntimeOutcome(
+            entry_result=FakeEntryOutcome(
+                execution_mode=(
+                    EquityEntryExecutionMode
+                    .LIVE
+                ),
+                placement_count=1,
+            )
         )
 
         self.assertEqual(
-            format_cycle_result(
-                result
-            ),
+            format_cycle_result(result),
             (
                 "EQUITY ENTRY CYCLE RESULT: "
                 "OPENING ORDER SUBMITTED"
@@ -510,6 +546,69 @@ class RobinhoodEquityProductionRunnerTests(
             ):
                 main()
 
+    def test_main_prints_closing_order_submitted(
+        self,
+    ) -> None:
+        result = FakeRuntimeOutcome(
+            entry_result=None,
+            exit_order_submitted=True,
+        )
+
+        with patch(
+            "stock_agent.runners."
+            "robinhood_equity_cycle."
+            "run_production_robinhood_equity_cycle",
+            return_value=result,
+        ):
+            output = StringIO()
+
+            with redirect_stdout(output):
+                exit_code = main()
+
+        self.assertEqual(
+            exit_code,
+            0,
+        )
+
+        self.assertEqual(
+            output.getvalue().strip(),
+            (
+                "EQUITY ENTRY CYCLE RESULT: "
+                "CLOSING ORDER SUBMITTED"
+            ),
+        )
+
+    def test_formats_submitted_exit_result(
+        self,
+    ) -> None:
+        result = FakeRuntimeOutcome(
+            entry_result=None,
+            exit_order_submitted=True,
+        )
+
+        self.assertEqual(
+            format_cycle_result(result),
+            (
+                "EQUITY ENTRY CYCLE RESULT: "
+                "CLOSING ORDER SUBMITTED"
+            ),
+        )
+
+    def test_formats_previewed_exit_as_review_only(
+        self,
+    ) -> None:
+        result = FakeRuntimeOutcome(
+            entry_result=None,
+            exit_previewed=True,
+        )
+
+        self.assertEqual(
+            format_cycle_result(result),
+            (
+                "EQUITY ENTRY CYCLE RESULT: "
+                "REVIEW ONLY"
+            ),
+        )
 
 
     

@@ -17,6 +17,7 @@ from stock_agent.orchestration.entry_placement_cycle import (
     EquityEntryExecutionMode,
 )
 from stock_agent.orchestration.robinhood_runtime_cycle import (
+    RobinhoodEquityRuntimeCycleResult,
     run_robinhood_equity_cycle_from_runtime,
 )
 from stock_agent.orchestration.robinhood_strategy_cycle import (
@@ -233,10 +234,30 @@ def run_production_robinhood_equity_cycle(
 
 
 def format_cycle_result(
-    result: RobinhoodEquityCycleRunOutcome,
+    result,
 ) -> str:
+    if result.exit_order_submitted:
+        return (
+            "EQUITY ENTRY CYCLE RESULT: "
+            "CLOSING ORDER SUBMITTED"
+        )
+
+    if result.exit_previewed:
+        return (
+            "EQUITY ENTRY CYCLE RESULT: "
+            "REVIEW ONLY"
+        )
+
+    entry_result = result.entry_result
+
+    if entry_result is None:
+        raise RuntimeError(
+            "runtime cycle result is missing "
+            "entry result after no-action exit"
+        )
+
     if (
-        result.execution_mode
+        entry_result.execution_mode
         is EquityEntryExecutionMode.REVIEW_ONLY
     ):
         return (
@@ -244,7 +265,7 @@ def format_cycle_result(
             "REVIEW ONLY"
         )
 
-    if result.placement_count > 0:
+    if result.entry_order_submitted:
         return (
             "EQUITY ENTRY CYCLE RESULT: "
             "OPENING ORDER SUBMITTED"
@@ -254,7 +275,6 @@ def format_cycle_result(
         "EQUITY ENTRY CYCLE RESULT: "
         "NO ACTION"
     )
-
 
 def main() -> int:
     try:
