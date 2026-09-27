@@ -364,6 +364,10 @@ def execute_approved_equity_entries(
             )
         )
 
+        placement_blocked_by = (
+            item.symbol
+        )
+
     return EquityEntryPlacementCycleOutcome(
         mode=mode,
         items=tuple(

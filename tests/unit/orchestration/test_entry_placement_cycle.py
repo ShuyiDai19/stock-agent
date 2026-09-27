@@ -470,7 +470,7 @@ class EntryPlacementCycleTests(
             placement,
         )
 
-    def test_failure_preserves_earlier_success_and_blocks_later_entry(
+    def test_successful_placement_blocks_remaining_entries(
         self,
     ) -> None:
         placer = FakePlacer(
@@ -510,12 +510,10 @@ class EntryPlacementCycleTests(
         self.assertEqual(
             [
                 call[0]
-                for call
-                in placer.calls
+                for call in placer.calls
             ],
             [
                 "AAPL",
-                "MSFT",
             ],
         )
 
@@ -526,35 +524,34 @@ class EntryPlacementCycleTests(
 
         self.assertEqual(
             result.failed_count,
-            1,
+            0,
         )
 
         self.assertEqual(
             result.blocked_count,
-            1,
+            2,
         )
 
         self.assertEqual(
-            result.placed_items[
-                0
-            ].symbol,
-            "AAPL",
+            [
+                item.symbol
+                for item
+                in result.blocked_items
+            ],
+            [
+                "MSFT",
+                "NVDA",
+            ],
         )
 
-        self.assertEqual(
-            result.failed_items[
-                0
-            ].symbol,
-            "MSFT",
+        self.assertTrue(
+            all(
+                item.blocked_by_symbol
+                == "AAPL"
+                for item
+                in result.blocked_items
+            )
         )
-
-        self.assertEqual(
-            result.blocked_items[
-                0
-            ].symbol,
-            "NVDA",
-        )
-
 
 if __name__ == "__main__":
     unittest.main()
