@@ -40,10 +40,7 @@ def extract_robinhood_order_next_cursor(
     ]
 
     if not markers:
-        raise ValueError(
-            "Robinhood order pagination "
-            "metadata is missing"
-        )
+        return None
 
     if any(
         marker != markers[0]

@@ -54,11 +54,15 @@ def page(
     *,
     next_value=None,
 ):
+    data = {
+        "orders": orders,
+    }
+
+    if next_value is not None:
+        data["next"] = next_value
+
     return {
-        "data": {
-            "orders": orders,
-            "next": next_value,
-        }
+        "data": data,
     }
 
 class MCPRobinhoodOrderActivityReaderTests(

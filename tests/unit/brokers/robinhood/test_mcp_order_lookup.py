@@ -529,7 +529,7 @@ class MCPRobinhoodOrderLookupTests(
             result.message,
         )
 
-    def test_missing_pagination_metadata_is_unknown(
+    def test_missing_next_with_no_orders_returns_not_found(
         self,
     ) -> None:
         invoker = SequencedFakeMCPToolInvoker(
@@ -545,6 +545,46 @@ class MCPRobinhoodOrderLookupTests(
         result = MCPRobinhoodOrderLookup(
             invoker
         ).lookup(
+            self.make_equity_request()
+        )
+
+        self.assertEqual(
+            result.status,
+            RobinhoodOrderLookupStatus.NOT_FOUND,
+        )
+
+        self.assertEqual(
+            len(invoker.calls),
+            1,
+        )
+
+    def test_missing_next_with_nonmatching_order_returns_unknown(
+        self,
+    ) -> None:
+        invoker = SequencedFakeMCPToolInvoker(
+            [
+                {
+                    "data": {
+                        "orders": [
+                            {
+                                "id": "other-order",
+                                "symbol": "AAPL",
+                                "ref_id": (
+                                    "00000000-0000-0000-"
+                                    "0000-000000000000"
+                                ),
+                            }
+                        ],
+                    }
+                }
+            ]
+        )
+
+        lookup = MCPRobinhoodOrderLookup(
+            invoker
+        )
+
+        result = lookup.lookup(
             self.make_equity_request()
         )
 
