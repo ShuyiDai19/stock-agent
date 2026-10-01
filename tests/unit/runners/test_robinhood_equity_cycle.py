@@ -17,6 +17,7 @@ from stock_agent.runners.robinhood_equity_cycle import (
     format_cycle_result,
     resolve_not_found_grace_period,
     resolve_robinhood_account_number,
+    resolve_mcp_startup_timeout_seconds,
     run_production_robinhood_equity_cycle,
     format_entry_rejection_diagnostics,
 )
@@ -286,6 +287,8 @@ class RobinhoodEquityProductionRunnerTests(
                 "live",
             "ROBINHOOD_LIVE_EXECUTION_ENABLED":
                 "true",
+            "ROBINHOOD_MCP_STARTUP_TIMEOUT_SECONDS":
+                "180",
         }
 
         result = (
@@ -317,6 +320,8 @@ class RobinhoodEquityProductionRunnerTests(
                             seconds=120
                         ),
                     "env": env,
+                    "startup_timeout_seconds":
+                        180,
                 }
             ],
         )
@@ -777,6 +782,44 @@ class RobinhoodEquityProductionRunnerTests(
             ),
         )
 
+    def test_resolves_default_mcp_startup_timeout(
+        self,
+    ) -> None:
+        self.assertEqual(
+            resolve_mcp_startup_timeout_seconds(
+                {}
+            ),
+            10,
+        )
+
+
+    def test_resolves_mcp_startup_timeout(
+        self,
+    ) -> None:
+        self.assertEqual(
+            resolve_mcp_startup_timeout_seconds(
+                {
+                    "ROBINHOOD_MCP_STARTUP_TIMEOUT_SECONDS":
+                        "180",
+                }
+            ),
+            180,
+        )
+
+
+    def test_rejects_invalid_mcp_startup_timeout(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "positive integer",
+        ):
+            resolve_mcp_startup_timeout_seconds(
+                {
+                    "ROBINHOOD_MCP_STARTUP_TIMEOUT_SECONDS":
+                        "0",
+                }
+            )
 
 
 if __name__ == "__main__":

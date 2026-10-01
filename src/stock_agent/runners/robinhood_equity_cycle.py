@@ -64,6 +64,12 @@ PRODUCTION_UNIVERSE_POLICY = (
     )
 )
 
+ROBINHOOD_MCP_STARTUP_TIMEOUT_SECONDS_ENV = (
+    "ROBINHOOD_MCP_STARTUP_TIMEOUT_SECONDS"
+)
+
+DEFAULT_ROBINHOOD_MCP_STARTUP_TIMEOUT_SECONDS = 10
+
 
 def _utc_now() -> datetime:
     return datetime.now(
@@ -148,6 +154,43 @@ def resolve_not_found_grace_period(
         seconds=seconds
     )
 
+def resolve_mcp_startup_timeout_seconds(
+    env=None,
+) -> int:
+    source = (
+        os.environ
+        if env is None
+        else env
+    )
+
+    raw_value = source.get(
+        ROBINHOOD_MCP_STARTUP_TIMEOUT_SECONDS_ENV
+    )
+
+    if raw_value is None:
+        return (
+            DEFAULT_ROBINHOOD_MCP_STARTUP_TIMEOUT_SECONDS
+        )
+
+    stripped = raw_value.strip()
+
+    try:
+        value = int(
+            stripped
+        )
+    except ValueError as error:
+        raise ValueError(
+            "ROBINHOOD_MCP_STARTUP_TIMEOUT_SECONDS "
+            "must be a positive integer"
+        ) from error
+
+    if value <= 0:
+        raise ValueError(
+            "ROBINHOOD_MCP_STARTUP_TIMEOUT_SECONDS "
+            "must be a positive integer"
+        )
+
+    return value
 
 def run_production_robinhood_equity_cycle(
     *,
@@ -193,12 +236,21 @@ def run_production_robinhood_equity_cycle(
             "timezone-aware datetime"
         )
 
+    startup_timeout_seconds = (
+        resolve_mcp_startup_timeout_seconds(
+            source
+        )
+    )
+
     with runtime_opener(
         account_number=account_number,
         not_found_grace_period=(
             grace_period
         ),
-        env=source,
+        env=env,
+        startup_timeout_seconds=(
+            startup_timeout_seconds
+        ),
     ) as runtime:
         if (
             runtime.live_execution_requested
