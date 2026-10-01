@@ -276,6 +276,174 @@ def format_cycle_result(
         "NO ACTION"
     )
 
+def format_no_action_diagnostics(
+    result,
+) -> str:
+    entry_result = getattr(
+        result,
+        "entry_result",
+        result,
+    )
+
+    if entry_result is None:
+        return (
+            "EQUITY ENTRY DIAGNOSTICS: "
+            "entry_result=none"
+        )
+
+    return (
+        "EQUITY ENTRY DIAGNOSTICS: "
+        f"universe_selected="
+        f"{len(getattr(entry_result, 'universe_eligible_symbols', ()))} "
+        f"universe_rejected="
+        f"{getattr(entry_result, 'universe_rejected_count', 0)} "
+        f"universe_errors="
+        f"{getattr(entry_result, 'universe_error_count', 0)} "
+        f"loaded_candidates="
+        f"{getattr(entry_result, 'loaded_candidate_count', 0)} "
+        f"eligible_entries="
+        f"{getattr(entry_result, 'eligible_entry_count', 0)} "
+        f"market_data_errors="
+        f"{getattr(entry_result, 'market_data_error_count', 0)} "
+        f"review_errors="
+        f"{getattr(entry_result, 'review_error_count', 0)} "
+        f"placement_blocked="
+        f"{getattr(entry_result, 'placement_blocked_count', 0)}"
+    )
+
+def format_entry_rejection_diagnostics(
+    result,
+) -> tuple[str, ...]:
+    entry_result = getattr(
+        result,
+        "entry_result",
+        None,
+    )
+
+    if entry_result is None:
+        return ()
+
+    cycle = getattr(
+        entry_result,
+        "cycle",
+        None,
+    )
+
+    if cycle is None:
+        return ()
+
+    strategy = getattr(
+        cycle,
+        "strategy",
+        None,
+    )
+
+    if strategy is None:
+        return ()
+
+    lines = []
+
+    for item in strategy.items:
+        if item.error is not None:
+            lines.append(
+                (
+                    "ENTRY REJECTION: "
+                    f"{item.symbol} "
+                    "error="
+                    f"{type(item.error).__name__}"
+                )
+            )
+
+            continue
+
+        outcome = item.outcome
+
+        if outcome is None:
+            continue
+
+        if outcome.eligible_to_place:
+            continue
+
+        confirmation_reasons = sorted(
+            reason.value
+            for reason
+            in outcome
+            .decision
+            .confirmation
+            .reasons
+        )
+
+        risk_reasons = sorted(
+            reason.value
+            for reason
+            in outcome
+            .decision
+            .risk
+            .reasons
+        )
+
+        details = []
+
+        if confirmation_reasons:
+            details.append(
+                (
+                    "confirmation="
+                    + ",".join(
+                        confirmation_reasons
+                    )
+                )
+            )
+
+        if risk_reasons:
+            details.append(
+                (
+                    "risk="
+                    + ",".join(
+                        risk_reasons
+                    )
+                )
+            )
+
+        if (
+            not confirmation_reasons
+            and not risk_reasons
+            and outcome.reason
+        ):
+            details.append(
+                (
+                    f"stage="
+                    f"{outcome.status.value}"
+                )
+            )
+            details.append(
+                (
+                    f"reason="
+                    f"{outcome.reason}"
+                )
+            )
+
+        if not details:
+            details.append(
+                (
+                    f"stage="
+                    f"{outcome.status.value}"
+                )
+            )
+
+        lines.append(
+            (
+                "ENTRY REJECTION: "
+                f"{item.symbol} "
+                + " ".join(
+                    details
+                )
+            )
+        )
+
+    return tuple(
+        lines
+    )
+
 def main() -> int:
     try:
         result = (
@@ -296,11 +464,37 @@ def main() -> int:
 
         return 0
 
-    print(
+    formatted_result = (
         format_cycle_result(
             result
         )
     )
+
+    print(
+        formatted_result
+    )
+
+    if (
+        formatted_result
+        == (
+            "EQUITY ENTRY CYCLE RESULT: "
+            "NO ACTION"
+        )
+    ):
+        print(
+            format_no_action_diagnostics(
+                result
+            )
+        )
+
+        for line in (
+            format_entry_rejection_diagnostics(
+                result
+            )
+        ):
+            print(
+                line
+            )
 
     return 0
 

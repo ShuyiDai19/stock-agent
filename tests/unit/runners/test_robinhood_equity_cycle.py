@@ -18,6 +18,7 @@ from stock_agent.runners.robinhood_equity_cycle import (
     resolve_not_found_grace_period,
     resolve_robinhood_account_number,
     run_production_robinhood_equity_cycle,
+    format_entry_rejection_diagnostics,
 )
 from contextlib import redirect_stdout
 from io import StringIO
@@ -32,6 +33,12 @@ from stock_agent.orchestration.equity_entry_preflight_service import (
 )
 from stock_agent.runners.robinhood_equity_cycle import (
     main,
+)
+from stock_agent.risk.entry_portfolio import (
+    EntryRiskReason,
+)
+from stock_agent.strategy.entry_confirmation import (
+    EntryConfirmationReason,
 )
 
 
@@ -55,11 +62,44 @@ class FakeEntryOutcome:
         ),
         placement_count=0,
         placement_failure_count=0,
+        universe_eligible_symbols=(),
+        universe_rejected_count=0,
+        universe_error_count=0,
+        loaded_candidate_count=0,
+        eligible_entry_count=0,
+        market_data_error_count=0,
+        review_error_count=0,
+        placement_blocked_count=0,
     ) -> None:
         self.execution_mode = execution_mode
         self.placement_count = placement_count
         self.placement_failure_count = (
             placement_failure_count
+        )
+
+        self.universe_eligible_symbols = (
+            universe_eligible_symbols
+        )
+        self.universe_rejected_count = (
+            universe_rejected_count
+        )
+        self.universe_error_count = (
+            universe_error_count
+        )
+        self.loaded_candidate_count = (
+            loaded_candidate_count
+        )
+        self.eligible_entry_count = (
+            eligible_entry_count
+        )
+        self.market_data_error_count = (
+            market_data_error_count
+        )
+        self.review_error_count = (
+            review_error_count
+        )
+        self.placement_blocked_count = (
+            placement_blocked_count
         )
 
 
@@ -610,8 +650,133 @@ class RobinhoodEquityProductionRunnerTests(
             ),
         )
 
+    def test_main_prints_no_action_diagnostics(
+        self,
+    ) -> None:
+        entry_result = FakeEntryOutcome(
+            execution_mode=(
+                EquityEntryExecutionMode
+                .LIVE
+            ),
+            placement_count=0,
+            universe_eligible_symbols=(
+                "AAPL",
+                "MSFT",
+            ),
+            universe_rejected_count=1,
+            universe_error_count=0,
+            loaded_candidate_count=2,
+            eligible_entry_count=0,
+            market_data_error_count=0,
+            review_error_count=0,
+            placement_blocked_count=0,
+        )
 
-    
+        result = FakeRuntimeOutcome(
+            entry_result=entry_result,
+        )
+
+        with patch(
+            "stock_agent.runners."
+            "robinhood_equity_cycle."
+            "run_production_robinhood_equity_cycle",
+            return_value=result,
+        ):
+            output = StringIO()
+
+            with redirect_stdout(
+                output
+            ):
+                exit_code = main()
+
+        self.assertEqual(
+            exit_code,
+            0,
+        )
+
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            [
+                (
+                    "EQUITY ENTRY CYCLE RESULT: "
+                    "NO ACTION"
+                ),
+                (
+                    "EQUITY ENTRY DIAGNOSTICS: "
+                    "universe_selected=2 "
+                    "universe_rejected=1 "
+                    "universe_errors=0 "
+                    "loaded_candidates=2 "
+                    "eligible_entries=0 "
+                    "market_data_errors=0 "
+                    "review_errors=0 "
+                    "placement_blocked=0"
+                ),
+            ],
+        )
+
+    def test_formats_entry_rejection_diagnostics(
+        self,
+    ) -> None:
+        rejected_item = SimpleNamespace(
+            symbol="AAPL",
+            error=None,
+            outcome=SimpleNamespace(
+                eligible_to_place=False,
+                decision=SimpleNamespace(
+                    confirmation=SimpleNamespace(
+                        reasons=frozenset(
+                            {
+                                EntryConfirmationReason
+                                .PRICE_NOT_ABOVE_VWAP,
+                            }
+                        ),
+                    ),
+                    risk=SimpleNamespace(
+                        reasons=frozenset(
+                            {
+                                EntryRiskReason
+                                .DUPLICATE_UNDERLYING,
+                            }
+                        ),
+                    ),
+                ),
+                status=SimpleNamespace(
+                    value="no_trade",
+                ),
+                reason=(
+                    "entry confirmation or "
+                    "portfolio risk rejected"
+                ),
+            ),
+        )
+
+        result = FakeRuntimeOutcome(
+            entry_result=SimpleNamespace(
+                cycle=SimpleNamespace(
+                    strategy=SimpleNamespace(
+                        items=(
+                            rejected_item,
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        self.assertEqual(
+            format_entry_rejection_diagnostics(
+                result
+            ),
+            (
+                (
+                    "ENTRY REJECTION: AAPL "
+                    "confirmation="
+                    "price_not_above_vwap "
+                    "risk=duplicate_underlying"
+                ),
+            ),
+        )
+
 
 
 if __name__ == "__main__":
