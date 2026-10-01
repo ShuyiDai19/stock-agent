@@ -142,6 +142,7 @@ def run_robinhood_equity_cycle_from_runtime(
     budget: Decimal = DEFAULT_ENTRY_BUDGET,
     exit_cycle_runner=None,
     entry_cycle_runner=None,
+    candidate_loader=None,
 ) -> RobinhoodEquityRuntimeCycleResult:
     if exit_cycle_runner is None:
         exit_cycle_runner = (
@@ -217,31 +218,52 @@ def run_robinhood_equity_cycle_from_runtime(
         preflight_reader = None
         preflight_opening_debit = None
 
+    entry_cycle_kwargs = {
+        "account_number": (
+            runtime.account_number
+        ),
+        "allowed_symbols": (
+            allowed_symbols
+        ),
+        "universe_policy": (
+            universe_policy
+        ),
+        "evaluated_at": (
+            evaluated_at
+        ),
+        "budget": (
+            budget
+        ),
+        "execution_mode": (
+            execution_mode
+        ),
+        "placer": (
+            placer
+        ),
+        "entry_recovery_service": (
+            entry_recovery_service
+        ),
+        "activation_reconciler": (
+            activation_reconciler
+        ),
+        "preflight_reader": (
+            preflight_reader
+        ),
+        "preflight_opening_debit": (
+            preflight_opening_debit
+        ),
+    }
+
+    if candidate_loader is not None:
+        entry_cycle_kwargs[
+            "candidate_loader"
+        ] = candidate_loader
+
     entry_result = (
         entry_cycle_runner(
             runtime._strategy_invoker,
             runtime.position_store,
-            account_number=(
-                runtime.account_number
-            ),
-            allowed_symbols=allowed_symbols,
-            universe_policy=universe_policy,
-            evaluated_at=evaluated_at,
-            budget=budget,
-            execution_mode=execution_mode,
-            placer=placer,
-            entry_recovery_service=(
-                entry_recovery_service
-            ),
-            activation_reconciler=(
-                activation_reconciler
-            ),
-            preflight_reader=(
-                preflight_reader
-            ),
-            preflight_opening_debit=(
-                preflight_opening_debit
-            ),
+            **entry_cycle_kwargs,
         )
     )
 

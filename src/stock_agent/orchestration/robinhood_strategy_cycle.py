@@ -381,9 +381,12 @@ def run_robinhood_equity_strategy_cycle(
     session_start: datetime,
     evaluated_at: datetime,
     budget: Decimal = DEFAULT_ENTRY_BUDGET,
+    candidate_loader=(
+        load_robinhood_equity_review_candidates
+    )
 ) -> RobinhoodEquityStrategyCycleOutcome:
     candidate_loading = (
-        load_robinhood_equity_review_candidates(
+        candidate_loader(
             invoker,
             symbols=symbols,
             session_start=session_start,
@@ -440,6 +443,9 @@ def run_robinhood_equity_strategy_cycle_from_store(
     ),
     evaluated_at: datetime,
     budget: Decimal = DEFAULT_ENTRY_BUDGET,
+    candidate_loader=(
+        load_robinhood_equity_review_candidates
+    ),
     execution_mode: (
         EquityEntryExecutionMode
     ) = (
@@ -625,6 +631,9 @@ def run_robinhood_equity_strategy_cycle_from_store(
                 evaluated_at
             ),
             budget=budget,
+            candidate_loader=(
+                candidate_loader
+            ),
         )
     )
 

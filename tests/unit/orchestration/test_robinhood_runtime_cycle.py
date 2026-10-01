@@ -221,6 +221,11 @@ class RobinhoodRuntimeCycleTests(
             .kwargs
         )
 
+        self.assertNotIn(
+            "candidate_loader",
+            kwargs,
+        )
+
         self.assertEqual(
             kwargs["execution_mode"],
             EquityEntryExecutionMode
@@ -357,6 +362,11 @@ class RobinhoodRuntimeCycleTests(
             entry_runner
             .call_args
             .kwargs
+        )
+
+        self.assertNotIn(
+            "candidate_loader",
+            kwargs,
         )
 
         self.assertEqual(
@@ -763,6 +773,100 @@ class RobinhoodRuntimeCycleTests(
             [
                 "exit",
             ],
+        )
+
+    def test_passes_candidate_loader_to_entry_cycle(
+        self,
+    ) -> None:
+        invoker = object()
+        store = object()
+        candidate_loader = object()
+
+        runtime = SimpleNamespace(
+            account_number=(
+                "agentic-account"
+            ),
+            _strategy_invoker=invoker,
+            position_store=store,
+            live_execution_requested=False,
+            live_execution_enabled=False,
+            entry_placer=None,
+            entry_recovery_service=None,
+            entry_activation_reconciler=None,
+            entry_preflight_reader=None,
+        )
+
+        expected = FakeEntryResult()
+
+        exit_runner = Mock(
+            return_value=(
+                make_no_action_exit_result()
+            )
+        )
+
+        entry_runner = Mock(
+            return_value=expected
+        )
+
+        result = (
+            run_robinhood_equity_cycle_from_runtime(
+                runtime,
+                allowed_symbols=(
+                    "AAPL",
+                ),
+                universe_policy=(
+                    _POLICY
+                ),
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
+                budget=Decimal("8"),
+                exit_cycle_runner=(
+                    exit_runner
+                ),
+                entry_cycle_runner=(
+                    entry_runner
+                ),
+                candidate_loader=(
+                    candidate_loader
+                ),
+            )
+        )
+
+        entry_runner.assert_called_once()
+
+        kwargs = (
+            entry_runner
+            .call_args
+            .kwargs
+        )
+
+        self.assertIs(
+            kwargs[
+                "candidate_loader"
+            ],
+            candidate_loader,
+        )
+
+        self.assertEqual(
+            kwargs[
+                "allowed_symbols"
+            ],
+            (
+                "AAPL",
+            ),
+        )
+
+        self.assertEqual(
+            kwargs[
+                "budget"
+            ],
+            Decimal("8"),
+        )
+
+        self.assertIs(
+            result.entry_result,
+            expected,
         )
 
 
