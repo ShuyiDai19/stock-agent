@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import datetime
 
 from stock_agent.brokers.robinhood.mcp import (
@@ -114,6 +115,11 @@ class EquityStrategyCycleOutcome:
 def run_equity_strategy_cycle(
     invoker: MCPToolInvoker,
     cycle_input: EquityStrategyCycleInput,
+    *,
+    execution_clock: (
+        Callable[[], datetime]
+        | None
+    ) = None,
 ) -> EquityStrategyCycleOutcome:
     review_batch = (
         run_equity_entry_review_batch(
@@ -129,6 +135,9 @@ def run_equity_strategy_cycle(
             ),
             evaluated_at=(
                 cycle_input.evaluated_at
+            ),
+            execution_clock=(
+                execution_clock
             ),
         )
     )

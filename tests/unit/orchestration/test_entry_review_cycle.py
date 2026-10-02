@@ -1,5 +1,9 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import (
+    datetime,
+    timedelta,
+    timezone,
+)
 from decimal import Decimal
 from typing import Any
 
@@ -395,6 +399,158 @@ class EntryReviewCycleTests(
 
         self.assertFalse(
             outcome.eligible_to_place
+        )
+
+    def test_uses_fresh_clock_for_execution_and_review_quotes(
+        self,
+    ) -> None:
+        from datetime import timedelta
+        from decimal import Decimal
+
+        from stock_agent.domain import (
+            AssetType,
+        )
+        from stock_agent.orchestration.entry_review_cycle import (
+            EntryReviewCycleStatus,
+            run_equity_entry_review_cycle,
+        )
+        from stock_agent.risk.entry_portfolio import (
+            EntryRiskRequest,
+        )
+        from stock_agent.strategy.entry_confirmation import (
+            BullishEntrySnapshot,
+        )
+        from stock_agent.strategy.entry_execution import (
+            EquityExecutionQuote,
+        )
+
+        cycle_time = datetime(
+            2026,
+            9,
+            23,
+            15,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        execution_quote_time = (
+            cycle_time
+            + timedelta(seconds=1)
+        )
+
+        execution_check_time = (
+            cycle_time
+            + timedelta(seconds=2)
+        )
+
+        review_quote_time = (
+            cycle_time
+            + timedelta(seconds=3)
+        )
+
+        review_check_time = (
+            cycle_time
+            + timedelta(seconds=4)
+        )
+
+        class Invoker:
+            def call_tool(
+                self,
+                tool_name,
+                arguments,
+            ):
+                assert tool_name == "review_equity_order"
+
+                return {
+                    "data": {
+                        "symbol": "AAPL",
+                        "side": "buy",
+                        "type": "market",
+                        "dollar_amount": "8",
+                        "order_checks": {},
+                        "quote_data": {
+                            "bid_price":
+                                "99.99",
+                            "ask_price":
+                                "100.01",
+                            "venue_bid_time": (
+                                review_quote_time
+                                .isoformat()
+                            ),
+                            "venue_ask_time": (
+                                review_quote_time
+                                .isoformat()
+                            ),
+                        },
+                    }
+                }
+
+        times = iter(
+            (
+                execution_check_time,
+                review_check_time,
+            )
+        )
+
+        outcome = (
+            run_equity_entry_review_cycle(
+                Invoker(),
+                account_number=(
+                    "agentic-account"
+                ),
+                market=(
+                    BullishEntrySnapshot(
+                        symbol="AAPL",
+                        price=Decimal("100"),
+                        session_open=Decimal(
+                            "99"
+                        ),
+                        vwap=Decimal("99"),
+                        recent_5m_closes=(
+                            Decimal("100"),
+                            Decimal("100"),
+                            Decimal("100"),
+                        ),
+                        observed_at=(
+                            cycle_time
+                        ),
+                    )
+                ),
+                request=(
+                    EntryRiskRequest(
+                        symbol="AAPL",
+                        asset_type=(
+                            AssetType.EQUITY
+                        ),
+                        opening_cost=(
+                            Decimal("8")
+                        ),
+                    )
+                ),
+                open_positions=(),
+                execution_quote=(
+                    EquityExecutionQuote(
+                        symbol="AAPL",
+                        bid=Decimal("99.99"),
+                        ask=Decimal("100.01"),
+                        observed_at=(
+                            execution_quote_time
+                        ),
+                    )
+                ),
+                evaluated_at=(
+                    cycle_time
+                ),
+                execution_clock=lambda: (
+                    next(times)
+                ),
+            )
+        )
+
+        self.assertEqual(
+            outcome.status,
+            EntryReviewCycleStatus
+            .REVIEW_APPROVED,
         )
 
 

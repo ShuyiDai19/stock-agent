@@ -274,6 +274,7 @@ def run_production_robinhood_equity_cycle(
                 evaluated_at
             ),
             budget=budget,
+            execution_clock=clock,
         )
 
     if result.placement_failure_count > 0:

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
 
@@ -117,6 +118,10 @@ def run_equity_entry_review_batch(
         ...,
     ],
     evaluated_at: datetime,
+    execution_clock: (
+        Callable[[], datetime]
+        | None
+    ) = None,
 ) -> EntryReviewBatchOutcome:
     if not account_number.strip():
         raise ValueError(
@@ -163,6 +168,9 @@ def run_equity_entry_review_batch(
                     ),
                     evaluated_at=(
                         evaluated_at
+                    ),
+                    execution_clock=(
+                        execution_clock
                     ),
                 )
             )

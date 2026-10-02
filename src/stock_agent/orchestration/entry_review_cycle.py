@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import datetime
 from enum import StrEnum
 
@@ -69,6 +70,10 @@ def run_equity_entry_review_cycle(
     ],
     execution_quote: EquityExecutionQuote,
     evaluated_at: datetime,
+    execution_clock: (
+        Callable[[], datetime]
+        | None
+    ) = None,
 ) -> EntryReviewCycleOutcome:
     decision = evaluate_entry_decision(
         market=market,
@@ -95,12 +100,30 @@ def run_equity_entry_review_cycle(
         decision=decision,
     )
 
+    execution_evaluated_at = (
+        evaluated_at
+        if execution_clock is None
+        else execution_clock()
+    )
+
+    if (
+        execution_evaluated_at.tzinfo is None
+        or execution_evaluated_at.utcoffset()
+        is None
+    ):
+        raise ValueError(
+            "execution clock must return "
+            "timezone-aware datetime"
+        )
+
     try:
         execution_plan = (
             build_equity_entry_execution_plan(
                 proposal,
                 execution_quote,
-                evaluated_at=evaluated_at,
+                evaluated_at=(
+                    execution_evaluated_at
+                ),
             )
         )
     except EntryExecutionNotAllowedError as error:
@@ -119,6 +142,22 @@ def run_equity_entry_review_cycle(
         account_number=account_number,
         plan=execution_plan,
     )
+
+    review_evaluated_at = (
+        evaluated_at
+        if execution_clock is None
+        else execution_clock()
+    )
+
+    if (
+        review_evaluated_at.tzinfo is None
+        or review_evaluated_at.utcoffset()
+        is None
+    ):
+        raise ValueError(
+            "execution clock must return "
+            "timezone-aware datetime"
+        )
 
     if not review.approved:
         return EntryReviewCycleOutcome(
@@ -140,7 +179,9 @@ def run_equity_entry_review_cycle(
     try:
         revalidate_robinhood_equity_entry_review(
             review,
-            evaluated_at=evaluated_at,
+            evaluated_at=(
+                review_evaluated_at
+            ),
         )
     except EntryExecutionNotAllowedError as error:
         return EntryReviewCycleOutcome(

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
 
@@ -383,7 +384,11 @@ def run_robinhood_equity_strategy_cycle(
     budget: Decimal = DEFAULT_ENTRY_BUDGET,
     candidate_loader=(
         load_robinhood_equity_review_candidates
-    )
+    ),
+    execution_clock: (
+        Callable[[], datetime]
+        | None
+    ) = None,
 ) -> RobinhoodEquityStrategyCycleOutcome:
     candidate_loading = (
         candidate_loader(
@@ -417,6 +422,9 @@ def run_robinhood_equity_strategy_cycle(
         run_equity_strategy_cycle(
             invoker,
             cycle_input,
+            execution_clock=(
+                execution_clock
+            ),
         )
     )
 
@@ -474,6 +482,10 @@ def run_robinhood_equity_strategy_cycle_from_store(
     minimum_cash_reserve: Decimal = (
         Decimal("5")
     ),
+    execution_clock: (
+        Callable[[], datetime]
+        | None
+    ) = None,
 ) -> RobinhoodEquityCycleRunOutcome:
     resolver = (
         XnysRegularMarketSessionResolver()
@@ -633,6 +645,9 @@ def run_robinhood_equity_strategy_cycle_from_store(
             budget=budget,
             candidate_loader=(
                 candidate_loader
+            ),
+            execution_clock=(
+                execution_clock
             ),
         )
     )

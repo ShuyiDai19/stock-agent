@@ -205,6 +205,11 @@ def main() -> int:
                 candidate_loader=(
                     candidate_loader
                 ),
+                execution_clock=(
+                    lambda: datetime.now(
+                        timezone.utc
+                    )
+                ),
             )
         )
 

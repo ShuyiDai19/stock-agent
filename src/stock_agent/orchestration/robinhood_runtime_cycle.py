@@ -143,6 +143,10 @@ def run_robinhood_equity_cycle_from_runtime(
     exit_cycle_runner=None,
     entry_cycle_runner=None,
     candidate_loader=None,
+    execution_clock: (
+        Callable[[], datetime]
+        | None
+    ) = None,
 ) -> RobinhoodEquityRuntimeCycleResult:
     if exit_cycle_runner is None:
         exit_cycle_runner = (
@@ -258,6 +262,11 @@ def run_robinhood_equity_cycle_from_runtime(
         entry_cycle_kwargs[
             "candidate_loader"
         ] = candidate_loader
+
+    if execution_clock is not None:
+        entry_cycle_kwargs[
+            "execution_clock"
+        ] = execution_clock
 
     entry_result = (
         entry_cycle_runner(
