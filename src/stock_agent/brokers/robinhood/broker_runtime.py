@@ -559,6 +559,25 @@ class RobinhoodRuntimeSession:
                 "entry preflight reader"
             )
 
+        if (
+            self.live_execution_enabled
+            and self.entry_recovery_service is None
+        ):
+            raise ValueError(
+                "live runtime requires "
+                "entry recovery service"
+            )
+
+        if (
+            self.live_execution_enabled
+            and self.entry_activation_reconciler
+            is None
+        ):
+            raise ValueError(
+                "live runtime requires "
+                "entry activation reconciler"
+            )
+
 def run_robinhood_startup_recovery(
     *,
     invoker: Any,

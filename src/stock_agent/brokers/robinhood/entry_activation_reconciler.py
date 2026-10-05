@@ -33,7 +33,10 @@ class RobinhoodEquityEntryActivationReconciler:
         self,
         *,
         account_number: str,
-    ):
+    ) -> tuple[
+        PositionRuntimeState,
+        ...,
+    ]:
         if not account_number.strip():
             raise ValueError(
                 "account_number cannot be empty"

@@ -514,6 +514,106 @@ class RobinhoodRuntimeCycleTests(
 
         entry_runner.assert_not_called()
 
+    def test_live_runtime_without_recovery_service_fails_closed(
+        self,
+    ) -> None:
+        runtime = SimpleNamespace(
+            account_number=(
+                "agentic-account"
+            ),
+            _strategy_invoker=object(),
+            position_store=object(),
+            live_execution_requested=True,
+            live_execution_enabled=True,
+            entry_placer=object(),
+            entry_recovery_service=None,
+            entry_activation_reconciler=(
+                object()
+            ),
+            entry_preflight_reader=object(),
+        )
+
+        exit_runner = Mock(
+            return_value=(
+                make_no_action_exit_result()
+            )
+        )
+
+        entry_runner = Mock()
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "missing entry recovery service",
+        ):
+            run_robinhood_equity_cycle_from_runtime(
+                runtime,
+                allowed_symbols=(
+                    "AAPL",
+                ),
+                universe_policy=_POLICY,
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
+                exit_cycle_runner=(
+                    exit_runner
+                ),
+                entry_cycle_runner=(
+                    entry_runner
+                ),
+            )
+
+        exit_runner.assert_called_once()
+        entry_runner.assert_not_called()
+
+    def test_live_runtime_without_activation_reconciler_fails_closed(
+        self,
+    ) -> None:
+        runtime = SimpleNamespace(
+            account_number=(
+                "agentic-account"
+            ),
+            _strategy_invoker=object(),
+            position_store=object(),
+            live_execution_requested=True,
+            live_execution_enabled=True,
+            entry_placer=object(),
+            entry_recovery_service=object(),
+            entry_activation_reconciler=None,
+            entry_preflight_reader=object(),
+        )
+
+        exit_runner = Mock(
+            return_value=(
+                make_no_action_exit_result()
+            )
+        )
+
+        entry_runner = Mock()
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "missing entry activation reconciler",
+        ):
+            run_robinhood_equity_cycle_from_runtime(
+                runtime,
+                allowed_symbols=(
+                    "AAPL",
+                ),
+                universe_policy=_POLICY,
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
+                exit_cycle_runner=(
+                    exit_runner
+                ),
+                entry_cycle_runner=(
+                    entry_runner
+                ),
+            )
+
+        exit_runner.assert_called_once()
+        entry_runner.assert_not_called()
+
     def test_submitted_exit_stops_before_entry(
         self,
     ) -> None:

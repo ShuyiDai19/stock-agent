@@ -182,6 +182,21 @@ def run_robinhood_equity_cycle_from_runtime(
                 "entry placer"
             )
 
+        if runtime.entry_recovery_service is None:
+            raise RuntimeError(
+                "live runtime is missing "
+                "entry recovery service"
+            )
+
+        if (
+            runtime.entry_activation_reconciler
+            is None
+        ):
+            raise RuntimeError(
+                "live runtime is missing "
+                "entry activation reconciler"
+            )
+
         if runtime.entry_preflight_reader is None:
             raise RuntimeError(
                 "live runtime is missing "
