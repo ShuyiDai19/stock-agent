@@ -77,6 +77,11 @@ from stock_agent.brokers.robinhood.mcp import (
 from stock_agent.brokers.robinhood.equity_exit_price_provider import (
     RobinhoodEquityExitPriceProvider,
 )
+from stock_agent.brokers.robinhood.restricted_mcp_invoker import (
+    ROBINHOOD_ENTRY_PLACEMENT_TOOLS,
+    ROBINHOOD_SAFE_RUNTIME_TOOLS,
+    RestrictedMCPToolInvoker,
+)
 
 
 ROBINHOOD_LIVE_EXECUTION_ENV = (
@@ -699,9 +704,15 @@ def open_robinhood_runtime(
             shutdown_timeout_seconds
         ),
     ) as invoker:
+        safe_invoker = RestrictedMCPToolInvoker(
+            invoker,
+            allowed_tools=(
+                ROBINHOOD_SAFE_RUNTIME_TOOLS
+            ),
+        )
         recovery = (
             run_robinhood_startup_recovery(
-                invoker=invoker,
+                invoker=safe_invoker,
                 placement_journal=journal,
                 not_found_grace_period=(
                     not_found_grace_period
@@ -772,7 +783,7 @@ def open_robinhood_runtime(
 
         entry_lookup = (
             MCPRobinhoodOrderLookup(
-                invoker
+                safe_invoker
             )
         )
 
@@ -786,7 +797,7 @@ def open_robinhood_runtime(
 
         equity_quote_provider = (
             MCPRobinhoodEquityQuoteProvider(
-                invoker
+                safe_invoker
             )
         )
 
@@ -798,7 +809,7 @@ def open_robinhood_runtime(
 
         entry_activation_reconciler = (
             RobinhoodEquityEntryActivationReconciler(
-                invoker,
+                safe_invoker,
                 entry_journal,
                 runtime_position_store,
                 equity_quote_provider,
@@ -825,22 +836,22 @@ def open_robinhood_runtime(
             RobinhoodEquityEntryPreflightReader(
                 position_reader=(
                     MCPRobinhoodEquityPositionReader(
-                        invoker
+                        safe_invoker
                     )
                 ),
                 option_exposure_reader=(
                     MCPRobinhoodOptionExposureReader(
-                        invoker
+                        safe_invoker
                     )
                 ),
                 order_activity_reader=(
                     MCPRobinhoodOrderActivityReader(
-                        invoker
+                        safe_invoker
                     )
                 ),
                 funds_reader=(
                     MCPRobinhoodEntryFundsReader(
-                        invoker
+                        safe_invoker
                     )
                 ),
             )
@@ -853,9 +864,18 @@ def open_robinhood_runtime(
                 RobinhoodApprovedEquityEntryPlacer,
             )
 
+            placement_invoker = (
+                RestrictedMCPToolInvoker(
+                    invoker,
+                    allowed_tools=(
+                        ROBINHOOD_ENTRY_PLACEMENT_TOOLS
+                    ),
+                )
+            )
+
             entry_placer = (
                 RobinhoodApprovedEquityEntryPlacer(
-                    invoker,
+                    placement_invoker,
                     entry_journal,
                     clock=_utc_now,
                 )
@@ -873,9 +893,15 @@ def open_robinhood_runtime(
             )
             
 
+        broker_invoker = (
+            invoker
+            if live_enabled
+            else safe_invoker
+        )
+
         broker = (
             _build_guarded_robinhood_broker(
-                invoker=invoker,
+                invoker=broker_invoker,
                 placement_journal=journal,
                 live_enabled=live_enabled,
             )
@@ -884,7 +910,7 @@ def open_robinhood_runtime(
         yield RobinhoodRuntimeSession(
             account_number=account_number,
             broker=broker,
-            _strategy_invoker=invoker,
+            _strategy_invoker=safe_invoker,
             placement_journal=journal,
             recovery=recovery,
             equity_exit_reconciler=(

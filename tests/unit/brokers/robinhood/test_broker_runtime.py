@@ -54,6 +54,10 @@ from stock_agent.brokers.robinhood.mcp_quote_provider import (
 from stock_agent.brokers.robinhood.equity_exit_price_provider import (
     RobinhoodEquityExitPriceProvider,
 )
+from stock_agent.brokers.robinhood.restricted_mcp_invoker import (
+    MCPToolNotAllowedError,
+    RestrictedMCPToolInvoker,
+)
 
 
     
@@ -2025,3 +2029,57 @@ class RobinhoodBrokerRuntimeTests(
                     )
                 ],
             )
+
+    def test_safe_runtime_strategy_invoker_cannot_place_order(
+        self,
+    ) -> None:
+        clients = []
+
+        def factory(server):
+            client = FakeMCPClient(
+                server
+            )
+            clients.append(
+                client
+            )
+            return client
+
+        with tempfile.TemporaryDirectory() as directory:
+            with open_robinhood_runtime(
+                account_number=(
+                    "agentic-account"
+                ),
+                not_found_grace_period=(
+                    timedelta(seconds=120)
+                ),
+                env={
+                    "STOCK_AGENT_RUNTIME_MODE":
+                        "safe",
+                    "ROBINHOOD_LIVE_EXECUTION_ENABLED":
+                        "false",
+                },
+                base_dir=Path(
+                    directory
+                ),
+                client_factory=factory,
+            ) as runtime:
+                self.assertIsInstance(
+                    runtime._strategy_invoker,
+                    RestrictedMCPToolInvoker,
+                )
+
+                with self.assertRaises(
+                    MCPToolNotAllowedError
+                ):
+                    runtime._strategy_invoker.call_tool(
+                        "place_equity_order",
+                        {
+                            "account_number":
+                                "agentic-account",
+                        },
+                    )
+
+        self.assertEqual(
+            clients[0].calls,
+            [],
+        )
