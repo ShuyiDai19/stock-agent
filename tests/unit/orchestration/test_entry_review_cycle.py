@@ -85,7 +85,7 @@ def request(
     return EntryRiskRequest(
         symbol="AAPL",
         asset_type=AssetType.EQUITY,
-        opening_cost=Decimal("8"),
+        opening_cost=Decimal("5"),
     )
 
 
@@ -113,7 +113,7 @@ def approved_review_result(
             "symbol": "AAPL",
             "side": "buy",
             "type": "market",
-            "dollar_amount": "8",
+            "dollar_amount": "5",
             "order_checks": (
                 {}
                 if checks is None
@@ -241,7 +241,7 @@ class EntryReviewCycleTests(
                 asset_type=(
                     AssetType.EQUITY
                 ),
-                opening_cost=Decimal("8"),
+                opening_cost=Decimal("5"),
             )
         )
 
@@ -466,7 +466,7 @@ class EntryReviewCycleTests(
                         "symbol": "AAPL",
                         "side": "buy",
                         "type": "market",
-                        "dollar_amount": "8",
+                        "dollar_amount": "5",
                         "order_checks": {},
                         "quote_data": {
                             "bid_price":
@@ -523,7 +523,7 @@ class EntryReviewCycleTests(
                             AssetType.EQUITY
                         ),
                         opening_cost=(
-                            Decimal("8")
+                            Decimal("5")
                         ),
                     )
                 ),

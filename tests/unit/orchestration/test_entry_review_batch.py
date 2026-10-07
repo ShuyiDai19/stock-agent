@@ -40,7 +40,7 @@ _NOW = datetime(
 def candidate(
     symbol: str,
     *,
-    budget: str = "8",
+    budget: str = "5",
     priority_score: str = "0",
 ) -> EquityEntryReviewCandidate:
     return EquityEntryReviewCandidate(
@@ -445,7 +445,7 @@ class EntryReviewBatchTests(
                     AssetType.EQUITY
                 ),
                 opening_cost=Decimal(
-                    "8"
+                    "5"
                 ),
             )
         )

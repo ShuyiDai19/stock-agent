@@ -62,7 +62,7 @@ def candidate(
             asset_type=(
                 AssetType.EQUITY
             ),
-            opening_cost=Decimal("8"),
+            opening_cost=Decimal("5"),
         ),
         execution_quote=(
             EquityExecutionQuote(
@@ -217,7 +217,7 @@ class StrategyCycleTests(
                     AssetType.EQUITY
                 ),
                 opening_cost=Decimal(
-                    "8"
+                    "5"
                 ),
             )
         )
