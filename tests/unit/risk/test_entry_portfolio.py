@@ -14,7 +14,7 @@ def position(
     symbol: str,
     *,
     asset_type: AssetType = AssetType.EQUITY,
-    opening_cost: str = "8",
+    opening_cost: str = "5",
 ) -> OpenPositionRiskSnapshot:
     return OpenPositionRiskSnapshot(
         symbol=symbol,
@@ -29,7 +29,7 @@ def request(
     symbol: str = "AAPL",
     *,
     asset_type: AssetType = AssetType.EQUITY,
-    opening_cost: str = "8",
+    opening_cost: str = "5",
 ) -> EntryRiskRequest:
     return EntryRiskRequest(
         symbol=symbol,
@@ -47,7 +47,9 @@ class EntryPortfolioRiskTests(
         self,
     ) -> None:
         decision = evaluate_entry_portfolio_risk(
-            request(),
+            request(
+                opening_cost="5",
+            ),
             (
                 position(
                     "MSFT",
@@ -81,7 +83,7 @@ class EntryPortfolioRiskTests(
     ) -> None:
         decision = evaluate_entry_portfolio_risk(
             request(
-                opening_cost="10.01"
+                opening_cost="5.01"
             ),
             (),
         )
@@ -96,7 +98,10 @@ class EntryPortfolioRiskTests(
         self,
     ) -> None:
         decision = evaluate_entry_portfolio_risk(
-            request("NVDA"),
+            request(
+                "NVDA",
+                opening_cost="5",
+            ),
             (
                 position("AAPL"),
                 position("MSFT"),
@@ -113,7 +118,10 @@ class EntryPortfolioRiskTests(
         self,
     ) -> None:
         decision = evaluate_entry_portfolio_risk(
-            request("AAPL"),
+            request(
+                "AAPL",
+                opening_cost="5",
+            ),
             (
                 position("AAPL"),
             ),
@@ -132,6 +140,7 @@ class EntryPortfolioRiskTests(
             request(
                 "NVDA",
                 asset_type=AssetType.OPTION,
+                opening_cost="5",
             ),
             (
                 position(
@@ -153,16 +162,12 @@ class EntryPortfolioRiskTests(
         decision = evaluate_entry_portfolio_risk(
             request(
                 "NVDA",
-                opening_cost="6",
+                opening_cost="5",
             ),
             (
                 position(
                     "AAPL",
-                    opening_cost="8",
-                ),
-                position(
-                    "MSFT",
-                    opening_cost="7",
+                    opening_cost="16",
                 ),
             ),
         )
@@ -173,18 +178,33 @@ class EntryPortfolioRiskTests(
             decision.reasons,
         )
 
+        # Keep this test focused on aggregate
+        # portfolio exposure rather than the
+        # per-order maximum.
+        self.assertNotIn(
+            EntryRiskReason
+            .OPENING_COST_TOO_LARGE,
+            decision.reasons,
+        )
+
+        self.assertNotIn(
+            EntryRiskReason
+            .MAX_OPEN_POSITIONS_REACHED,
+            decision.reasons,
+        )
+
     def test_allows_exact_boundaries(
         self,
     ) -> None:
         decision = evaluate_entry_portfolio_risk(
             request(
                 "MSFT",
-                opening_cost="10",
+                opening_cost="5",
             ),
             (
                 position(
                     "AAPL",
-                    opening_cost="10",
+                    opening_cost="15",
                 ),
             ),
         )
@@ -200,7 +220,7 @@ class EntryPortfolioRiskTests(
             request(
                 "AAPL",
                 asset_type=AssetType.OPTION,
-                opening_cost="11",
+                opening_cost="5.01",
             ),
             (
                 position(

@@ -24,6 +24,10 @@ from stock_agent.brokers.robinhood.position_snapshots import (
 from stock_agent.brokers.robinhood.option_exposure_reader import (
     RobinhoodOptionExposureReadResult,
 )
+from stock_agent.orchestration.equity_entry_preflight import (
+    EquityEntryPreflightDataSource,
+    EquityEntryPreflightDataUnavailableError,
+)
 
 
 _EVALUATED_AT = datetime(
@@ -282,7 +286,7 @@ class RobinhoodEquityEntryPreflightReaderTests(
             snapshot.has_existing_position
         )
 
-    def test_dependency_failure_propagates(
+    def test_dependency_failure_preserves_source_and_cause(
         self,
     ) -> None:
         class FailingPositionReader:
@@ -300,45 +304,46 @@ class RobinhoodEquityEntryPreflightReaderTests(
                 position_reader=(
                     FailingPositionReader()
                 ),
-                option_exposure_reader=(
-                    FakeOptionExposureReader()
-                ),
-                order_activity_reader=(
-                    FakeOrderActivityReader(
-                        RobinhoodOrderActivityReadResult(
-                            has_open_equity_order=False,
-                            has_open_option_order=False,
-                            has_opening_order_today=False,
-                        )
-                    )
-                ),
-                funds_reader=(
-                    FakeFundsReader(
-                        RobinhoodEntryFundsSnapshot(
-                            buying_power=Decimal(
-                                "90"
-                            ),
-                            cash=Decimal(
-                                "90"
-                            ),
-                        )
-                    )
-                ),
+                option_exposure_reader=object(),
+                order_activity_reader=object(),
+                funds_reader=object(),
             )
         )
 
-        with self.assertRaisesRegex(
-            RuntimeError,
-            "positions unavailable",
-        ):
+        with self.assertRaises(
+            EquityEntryPreflightDataUnavailableError
+        ) as context:
             reader.read(
                 account_number=(
-                    "account-0000"
+                    "agentic-account"
                 ),
                 evaluated_at=(
                     _EVALUATED_AT
                 ),
             )
+
+        error = context.exception
+
+        self.assertEqual(
+            error.source,
+            EquityEntryPreflightDataSource
+            .POSITIONS,
+        )
+
+        self.assertIsInstance(
+            error.cause,
+            RuntimeError,
+        )
+
+        self.assertEqual(
+            str(error.cause),
+            "positions unavailable",
+        )
+
+        self.assertIs(
+            error.__cause__,
+            error.cause,
+        )
 
     def test_option_position_sets_existing_position(
         self,

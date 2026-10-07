@@ -17,7 +17,7 @@ from stock_agent.strategy.entry_execution import (
 )
 
 
-DEFAULT_ENTRY_BUDGET = Decimal("8")
+DEFAULT_ENTRY_BUDGET = Decimal("5")
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,7 +6,7 @@ from stock_agent.domain import AssetType
 
 
 MIN_OPENING_COST = Decimal("5")
-MAX_OPENING_COST = Decimal("10")
+MAX_OPENING_COST = Decimal("5")
 MAX_TOTAL_OPENING_COST = Decimal("20")
 MAX_OPEN_POSITIONS = 2
 MAX_OPTION_POSITIONS = 1

@@ -6,8 +6,25 @@ from datetime import (
 from decimal import Decimal
 from stock_agent.orchestration.equity_entry_preflight import (
     EquityEntryPreflightBlocker,
+    EquityEntryPreflightDataSource,
+    EquityEntryPreflightDataUnavailableError,
+    EquityEntryPreflightResult,
     EquityEntryPreflightSnapshot,
     evaluate_equity_entry_preflight,
+)
+
+from stock_agent.orchestration.equity_entry_preflight_service import (
+    EquityEntryPreflightBlockedError,
+    require_live_equity_entry_preflight,
+)
+
+_EVALUATED_AT = datetime(
+    2026,
+    10,
+    5,
+    18,
+    0,
+    tzinfo=timezone.utc,
 )
 
 
@@ -260,4 +277,58 @@ class EquityEntryPreflightTests(
             EquityEntryPreflightBlocker
             .INSUFFICIENT_CASH_RESERVE,
             result.blockers,
+        )
+
+    def test_preserves_unavailable_data_source(
+        self,
+    ) -> None:
+        class Reader:
+            def read(
+                self,
+                *,
+                account_number,
+                evaluated_at,
+            ):
+                raise (
+                    EquityEntryPreflightDataUnavailableError(
+                        EquityEntryPreflightDataSource
+                        .FUNDS,
+                        RuntimeError(
+                            "funds unavailable"
+                        ),
+                    )
+                )
+
+        with self.assertRaises(
+            EquityEntryPreflightBlockedError
+        ) as context:
+            require_live_equity_entry_preflight(
+                Reader(),
+                account_number=(
+                    "agentic-account"
+                ),
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
+                opening_debit=(
+                    Decimal("5")
+                ),
+            )
+
+        self.assertEqual(
+            context.exception.result.blockers,
+            (
+                EquityEntryPreflightBlocker
+                .DATA_UNAVAILABLE,
+            ),
+        )
+
+        self.assertEqual(
+            context.exception
+            .result
+            .unavailable_sources,
+            (
+                EquityEntryPreflightDataSource
+                .FUNDS,
+            ),
         )

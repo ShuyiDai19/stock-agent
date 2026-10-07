@@ -9,6 +9,8 @@ from stock_agent.brokers.robinhood.position_reader import (
     MCPRobinhoodEquityPositionReader,
 )
 from stock_agent.orchestration.equity_entry_preflight import (
+    EquityEntryPreflightDataSource,
+    EquityEntryPreflightDataUnavailableError,
     EquityEntryPreflightSnapshot,
 )
 from stock_agent.brokers.robinhood.entry_funds import (
@@ -63,38 +65,79 @@ class RobinhoodEquityEntryPreflightReader:
                 "timezone-aware"
             )
 
-        positions = (
-            self._position_reader.read(
-                account_number=(
-                    account_number
+        try:
+            positions = (
+                self._position_reader.read(
+                    account_number=(
+                        account_number
+                    )
                 )
             )
-        )
+        except Exception as exc:
+            raise (
+                EquityEntryPreflightDataUnavailableError(
+                    EquityEntryPreflightDataSource
+                    .POSITIONS,
+                    exc,
+                )
+            ) from exc
 
-        option_exposure = (
-            self._option_exposure_reader.read(
-                account_number=account_number
-            )
-        )
 
-        order_activity = (
-            self._order_activity_reader.read(
-                account_number=(
-                    account_number
-                ),
-                evaluated_at=(
-                    evaluated_at
-                ),
-            )
-        )
-
-        funds = (
-            self._funds_reader.read(
-                account_number=(
-                    account_number
+        try:
+            option_exposure = (
+                self._option_exposure_reader.read(
+                    account_number=(
+                        account_number
+                    )
                 )
             )
-        )
+        except Exception as exc:
+            raise (
+                EquityEntryPreflightDataUnavailableError(
+                    EquityEntryPreflightDataSource
+                    .OPTION_EXPOSURE,
+                    exc,
+                )
+            ) from exc
+
+
+        try:
+            order_activity = (
+                self._order_activity_reader.read(
+                    account_number=(
+                        account_number
+                    ),
+                    evaluated_at=(
+                        evaluated_at
+                    ),
+                )
+            )
+        except Exception as exc:
+            raise (
+                EquityEntryPreflightDataUnavailableError(
+                    EquityEntryPreflightDataSource
+                    .ORDER_ACTIVITY,
+                    exc,
+                )
+            ) from exc
+
+
+        try:
+            funds = (
+                self._funds_reader.read(
+                    account_number=(
+                        account_number
+                    )
+                )
+            )
+        except Exception as exc:
+            raise (
+                EquityEntryPreflightDataUnavailableError(
+                    EquityEntryPreflightDataSource
+                    .FUNDS,
+                    exc,
+                )
+            ) from exc
 
         has_equity_position = any(
             position.quantity > Decimal("0")

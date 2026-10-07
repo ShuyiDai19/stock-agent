@@ -3,10 +3,19 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
+from zoneinfo import ZoneInfo
+
+from stock_agent.brokers.robinhood.entry_execution_limits import (
+    EquityEntryDailyLimitExceededError,
+    MAX_LIVE_DAILY_ENTRY_NOTIONAL,
+    equity_entry_placement_arguments_notional,
+    require_live_equity_entry_order_limit,
+)
 
 from stock_agent.brokers.robinhood.entry_review import (
     RobinhoodEquityEntryReview,
@@ -24,6 +33,22 @@ class EntryPlacementStatus(StrEnum):
     ACKNOWLEDGED = "acknowledged"
     UNCERTAIN = "uncertain"
     ACTIVATED = "activated"
+
+
+_ENTRY_DAILY_RESERVED_STATUSES = frozenset(
+    {
+        EntryPlacementStatus.PREPARED,
+        EntryPlacementStatus.SUBMITTING,
+        EntryPlacementStatus.UNCERTAIN,
+        EntryPlacementStatus.ACKNOWLEDGED,
+        EntryPlacementStatus.ACTIVATED,
+    }
+)
+
+
+_EQUITY_MARKET_TIMEZONE = ZoneInfo(
+    "America/New_York"
+)
 
 class RobinhoodEquityEntryPlacementUncertainError(
     RuntimeError
@@ -267,6 +292,243 @@ class SQLiteEquityEntryPlacementJournal:
                         ),
                     ),
                 )
+
+    def reserve_prepared_with_daily_limit(
+        self,
+        record: EquityEntryPlacementRecord,
+        *,
+        max_daily_notional: Decimal = (
+            MAX_LIVE_DAILY_ENTRY_NOTIONAL
+        ),
+    ) -> Decimal:
+        if (
+            record.status
+            is not EntryPlacementStatus.PREPARED
+        ):
+            raise ValueError(
+                "daily entry reservation requires "
+                "PREPARED status"
+            )
+
+        if (
+            not max_daily_notional.is_finite()
+            or max_daily_notional
+            <= Decimal("0")
+        ):
+            raise ValueError(
+                "max_daily_notional must be "
+                "positive and finite"
+            )
+
+        requested_notional = (
+            equity_entry_placement_arguments_notional(
+                record.arguments
+            )
+        )
+
+        trading_day = (
+            record.attempted_at
+            .astimezone(
+                _EQUITY_MARKET_TIMEZONE
+            )
+            .date()
+        )
+
+        with closing(
+            self._connect()
+        ) as connection:
+            try:
+                # Serialize competing writers so
+                # two processes cannot both reserve
+                # the same remaining daily capacity.
+                connection.execute(
+                    "BEGIN IMMEDIATE"
+                )
+
+                rows = connection.execute(
+                    """
+                    SELECT
+                        arguments_json,
+                        attempted_at,
+                        status
+                    FROM entry_placement_attempts
+                    WHERE account_number = ?
+                    ORDER BY
+                        attempted_at,
+                        ref_id
+                    """,
+                    (
+                        record.account_number,
+                    ),
+                ).fetchall()
+
+                used_notional = Decimal(
+                    "0"
+                )
+
+                for (
+                    arguments_json,
+                    attempted_at,
+                    status,
+                ) in rows:
+                    stored_status = (
+                        EntryPlacementStatus(
+                            status
+                        )
+                    )
+
+                    if (
+                        stored_status
+                        not in
+                        _ENTRY_DAILY_RESERVED_STATUSES
+                    ):
+                        continue
+
+                    stored_attempted_at = (
+                        datetime.fromisoformat(
+                            attempted_at
+                        )
+                    )
+
+                    if (
+                        stored_attempted_at
+                        .tzinfo is None
+                        or stored_attempted_at
+                        .utcoffset() is None
+                    ):
+                        raise RuntimeError(
+                            "stored entry placement "
+                            "attempted_at is not "
+                            "timezone-aware"
+                        )
+
+                    stored_trading_day = (
+                        stored_attempted_at
+                        .astimezone(
+                            _EQUITY_MARKET_TIMEZONE
+                        )
+                        .date()
+                    )
+
+                    if (
+                        stored_trading_day
+                        != trading_day
+                    ):
+                        continue
+
+                    stored_arguments = (
+                        json.loads(
+                            arguments_json
+                        )
+                    )
+
+                    if not isinstance(
+                        stored_arguments,
+                        dict,
+                    ):
+                        raise RuntimeError(
+                            "stored entry placement "
+                            "arguments are invalid"
+                        )
+
+                    try:
+                        stored_notional = (
+                            equity_entry_placement_arguments_notional(
+                                stored_arguments
+                            )
+                        )
+                    except (
+                        TypeError,
+                        ValueError,
+                    ) as exc:
+                        raise RuntimeError(
+                            "stored entry placement "
+                            "notional is unavailable"
+                        ) from exc
+
+                    used_notional += (
+                        stored_notional
+                    )
+
+                if (
+                    used_notional
+                    + requested_notional
+                    > max_daily_notional
+                ):
+                    raise (
+                        EquityEntryDailyLimitExceededError(
+                            used_notional=(
+                                used_notional
+                            ),
+                            requested_notional=(
+                                requested_notional
+                            ),
+                            max_daily_notional=(
+                                max_daily_notional
+                            ),
+                        )
+                    )
+
+                connection.execute(
+                    """
+                    INSERT INTO
+                    entry_placement_attempts (
+                        ref_id,
+                        account_number,
+                        symbol,
+                        arguments_json,
+                        attempted_at,
+                        status,
+                        broker_order_id,
+                        acknowledged_at,
+                        recovered_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.ref_id,
+                        record.account_number,
+                        record.symbol,
+                        json.dumps(
+                            record.arguments,
+                            sort_keys=True,
+                        ),
+                        record
+                        .attempted_at
+                        .isoformat(),
+                        record.status.value,
+                        record.broker_order_id,
+                        (
+                            record
+                            .acknowledged_at
+                            .isoformat()
+                            if record
+                            .acknowledged_at
+                            is not None
+                            else None
+                        ),
+                        (
+                            record
+                            .recovered_at
+                            .isoformat()
+                            if record
+                            .recovered_at
+                            is not None
+                            else None
+                        ),
+                    ),
+                )
+
+                connection.commit()
+
+            except Exception:
+                connection.rollback()
+                raise
+
+        return (
+            used_notional
+            + requested_notional
+        )
 
     def transition(
         self,
@@ -670,6 +932,140 @@ class SQLiteEquityEntryPlacementJournal:
                         "recovery failed"
                     )
 
+    def daily_reserved_notional(
+        self,
+        *,
+        account_number: str,
+        as_of: datetime,
+    ) -> Decimal:
+        if not account_number.strip():
+            raise ValueError(
+                "account_number cannot be empty"
+            )
+
+        if (
+            as_of.tzinfo is None
+            or as_of.utcoffset() is None
+        ):
+            raise ValueError(
+                "as_of must be timezone-aware"
+            )
+
+        trading_day = (
+            as_of
+            .astimezone(
+                _EQUITY_MARKET_TIMEZONE
+            )
+            .date()
+        )
+
+        with closing(
+            self._connect()
+        ) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    arguments_json,
+                    attempted_at,
+                    status
+                FROM entry_placement_attempts
+                WHERE account_number = ?
+                ORDER BY
+                    attempted_at,
+                    ref_id
+                """,
+                (
+                    account_number,
+                ),
+            ).fetchall()
+
+        used_notional = Decimal(
+            "0"
+        )
+
+        for (
+            arguments_json,
+            attempted_at,
+            status,
+        ) in rows:
+            stored_status = (
+                EntryPlacementStatus(
+                    status
+                )
+            )
+
+            if (
+                stored_status
+                not in
+                _ENTRY_DAILY_RESERVED_STATUSES
+            ):
+                continue
+
+            stored_attempted_at = (
+                datetime.fromisoformat(
+                    attempted_at
+                )
+            )
+
+            if (
+                stored_attempted_at.tzinfo
+                is None
+                or stored_attempted_at
+                .utcoffset() is None
+            ):
+                raise RuntimeError(
+                    "stored entry placement "
+                    "attempted_at is not "
+                    "timezone-aware"
+                )
+
+            stored_day = (
+                stored_attempted_at
+                .astimezone(
+                    _EQUITY_MARKET_TIMEZONE
+                )
+                .date()
+            )
+
+            if stored_day != trading_day:
+                continue
+
+            stored_arguments = (
+                json.loads(
+                    arguments_json
+                )
+            )
+
+            if not isinstance(
+                stored_arguments,
+                dict,
+            ):
+                raise RuntimeError(
+                    "stored entry placement "
+                    "arguments are invalid"
+                )
+
+            try:
+                notional = (
+                    equity_entry_placement_arguments_notional(
+                        stored_arguments
+                    )
+                )
+            except (
+                TypeError,
+                ValueError,
+            ) as exc:
+                raise RuntimeError(
+                    "stored entry placement "
+                    "notional is unavailable"
+                ) from exc
+
+            used_notional += (
+                notional
+            )
+
+        return used_notional
+
 
 def _decode_entry_placement_result(
     raw_result: Any,
@@ -763,6 +1159,16 @@ def place_robinhood_equity_entry(
         evaluated_at=now,
     )
 
+    # Hard execution boundary.
+    #
+    # This check is intentionally enforced here,
+    # immediately before creating/persisting the
+    # placement attempt and before any broker-side
+    # placement call.
+    require_live_equity_entry_order_limit(
+        review.plan
+    )
+
     ref_id = (
         ref_id_factory
         or (lambda: str(uuid4()))
@@ -780,7 +1186,7 @@ def place_robinhood_equity_entry(
         "ref_id": ref_id,
     }
 
-    journal.insert(
+    journal.reserve_prepared_with_daily_limit(
         EquityEntryPlacementRecord(
             ref_id=ref_id,
             account_number=account_number,
@@ -790,7 +1196,7 @@ def place_robinhood_equity_entry(
             status=(
                 EntryPlacementStatus.PREPARED
             ),
-        )
+        ),
     )
 
     journal.transition(

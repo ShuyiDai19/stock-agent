@@ -38,6 +38,31 @@ class EquityEntryPreflightBlocker(
         "data_unavailable"
     )
 
+class EquityEntryPreflightDataSource(
+    StrEnum
+):
+    POSITIONS = "positions"
+    OPTION_EXPOSURE = "option_exposure"
+    ORDER_ACTIVITY = "order_activity"
+    FUNDS = "funds"
+
+
+class EquityEntryPreflightDataUnavailableError(
+    RuntimeError
+):
+    def __init__(
+        self,
+        source: EquityEntryPreflightDataSource,
+        cause: Exception,
+    ) -> None:
+        self.source = source
+        self.cause = cause
+
+        super().__init__(
+            "equity entry preflight data "
+            f"unavailable: {source.value}"
+        )
+
 
 @dataclass(
     frozen=True,
@@ -73,6 +98,11 @@ class EquityEntryPreflightResult:
         EquityEntryPreflightBlocker,
         ...
     ]
+
+    unavailable_sources: tuple[
+        EquityEntryPreflightDataSource,
+        ...
+    ] = ()
 
     @property
     def eligible(self) -> bool:

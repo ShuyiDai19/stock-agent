@@ -3,6 +3,7 @@ from typing import Protocol
 
 from stock_agent.orchestration.equity_entry_preflight import (
     EquityEntryPreflightBlocker,
+    EquityEntryPreflightDataUnavailableError,
     EquityEntryPreflightResult,
     EquityEntryPreflightSnapshot,
     evaluate_equity_entry_preflight,
@@ -63,13 +64,34 @@ def require_live_equity_entry_preflight(
             account_number=account_number,
             evaluated_at=evaluated_at,
         )
-    except Exception as exc:
+
+    except EquityEntryPreflightDataUnavailableError as exc:
         unavailable = (
             EquityEntryPreflightResult(
                 blockers=(
                     EquityEntryPreflightBlocker
                     .DATA_UNAVAILABLE,
-                )
+                ),
+                unavailable_sources=(
+                    exc.source,
+                ),
+            )
+        )
+
+        raise (
+            EquityEntryPreflightBlockedError(
+                unavailable
+            )
+        ) from exc
+
+    except Exception as exc:
+        # Unknown reader failure still fails closed.
+        unavailable = (
+            EquityEntryPreflightResult(
+                blockers=(
+                    EquityEntryPreflightBlocker
+                    .DATA_UNAVAILABLE,
+                ),
             )
         )
 

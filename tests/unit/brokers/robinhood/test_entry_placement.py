@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import Mock
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -10,6 +11,9 @@ from stock_agent.brokers.robinhood.entry_placement import (
     RobinhoodEquityEntryPlacementUncertainError,
     SQLiteEquityEntryPlacementJournal,
     place_robinhood_equity_entry,
+)
+from stock_agent.brokers.robinhood.entry_execution_limits import (
+    EquityEntryOrderLimitExceededError,
 )
 from stock_agent.brokers.robinhood.entry_review import (
     RobinhoodEquityEntryReview,
@@ -72,8 +76,8 @@ def fractional_review(
             EquityEntryExecutionMode
             .FRACTIONAL_MARKET
         ),
-        budget=Decimal("8"),
-        dollar_amount=Decimal("8"),
+        budget=Decimal("5"),
+        dollar_amount=Decimal("5"),
         quote_observed_at=_NOW,
     )
 
@@ -176,7 +180,7 @@ class EntryPlacementTests(
                             "regular_hours"
                         ),
                         "type": "market",
-                        "dollar_amount": "8",
+                        "dollar_amount": "5",
                         "ref_id": _REF_ID,
                     },
                 )
@@ -545,6 +549,77 @@ class EntryPlacementTests(
             after.recovered_at
         )
 
+    def test_order_above_live_notional_limit_fails_before_placement(
+        self,
+    ) -> None:
+        now = datetime(
+            2026,
+            10,
+            5,
+            18,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        invoker = Mock()
+        journal = Mock()
+        ref_id_factory = Mock(
+            return_value="entry-ref-1"
+        )
+
+        plan = EquityEntryExecutionPlan(
+            symbol="AAPL",
+            mode=(
+                EquityEntryExecutionMode
+                .FRACTIONAL_MARKET
+            ),
+            budget=Decimal("5.01"),
+            dollar_amount=Decimal("5.01"),
+            quote_observed_at=now,
+        )
+
+        review = RobinhoodEquityEntryReview(
+            plan=plan,
+            approved=True,
+            order_checks={},
+            quote_data={
+                "bid_price": "100",
+                "ask_price": "100.10",
+                "venue_bid_time": (
+                    now.isoformat()
+                ),
+                "venue_ask_time": (
+                    now.isoformat()
+                ),
+            },
+            market_data_disclosure=None,
+        )
+
+        with self.assertRaises(
+            EquityEntryOrderLimitExceededError
+        ):
+            place_robinhood_equity_entry(
+                invoker,
+                journal,
+                account_number=(
+                    "agentic-account"
+                ),
+                review=review,
+                clock=lambda: now,
+                ref_id_factory=(
+                    ref_id_factory
+                ),
+            )
+
+        invoker.call_tool.assert_not_called()
+
+        journal.insert.assert_not_called()
+
+        journal.transition.assert_not_called()
+
+        journal.acknowledge.assert_not_called()
+
+        ref_id_factory.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()
