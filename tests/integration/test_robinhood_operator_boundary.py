@@ -44,6 +44,7 @@ class RobinhoodOperatorBoundaryIntegrationTests(
             evaluated_at,
             budget,
             env,
+            execution_clock=None,
         ):
             @contextmanager
             def runtime_opener(

@@ -63,6 +63,10 @@ def run_robinhood_equity_runtime_once(
     evaluated_at: datetime,
     budget: Decimal = DEFAULT_ENTRY_BUDGET,
     env: dict[str, str] | None = None,
+    execution_clock: (
+        Callable[[], datetime]
+        | None
+    ) = None,
     runtime_opener: RuntimeOpener = (
         open_robinhood_runtime
     ),
@@ -101,16 +105,29 @@ def run_robinhood_equity_runtime_once(
         ),
         env=env,
     ) as runtime:
-        cycle = cycle_runner(
-            runtime,
-            allowed_symbols=(
+        cycle_kwargs: dict[str, Any] = {
+            "allowed_symbols": (
                 allowed_symbols
             ),
-            universe_policy=(
+            "universe_policy": (
                 universe_policy
             ),
-            evaluated_at=evaluated_at,
-            budget=budget,
+            "evaluated_at": (
+                evaluated_at
+            ),
+            "budget": (
+                budget
+            ),
+        }
+
+        if execution_clock is not None:
+            cycle_kwargs[
+                "execution_clock"
+            ] = execution_clock
+
+        cycle = cycle_runner(
+            runtime,
+            **cycle_kwargs,
         )
 
         return (

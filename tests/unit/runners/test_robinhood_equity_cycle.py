@@ -25,6 +25,9 @@ from contextlib import redirect_stdout
 from io import StringIO
 from unittest.mock import patch
 
+from stock_agent.strategy.candidate_generation import (
+    DEFAULT_ENTRY_BUDGET,
+)
 from stock_agent.orchestration.equity_entry_preflight import (
     EquityEntryPreflightBlocker,
     EquityEntryPreflightResult,
@@ -368,7 +371,7 @@ class RobinhoodEquityProductionRunnerTests(
             kwargs[
                 "budget"
             ],
-            Decimal("8"),
+            DEFAULT_ENTRY_BUDGET,
         )
 
     def test_live_requested_but_blocked_fails_closed(

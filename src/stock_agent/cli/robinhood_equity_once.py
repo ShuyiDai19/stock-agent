@@ -322,6 +322,7 @@ def run_operator_command(
         evaluated_at=evaluated_at,
         budget=args.budget,
         env=runtime_env,
+        execution_clock=effective_clock,
     )
 
 
@@ -329,31 +330,267 @@ def format_operator_result(
     outcome: RobinhoodEquityRuntimeRunOutcome,
 ) -> str:
     cycle = outcome.cycle
+    entry = cycle.entry_result
+
+    lines = [
+        "Robinhood equity runtime run",
+        (
+            "live requested: "
+            f"{outcome.live_execution_requested}"
+        ),
+        (
+            "live enabled: "
+            f"{outcome.live_execution_enabled}"
+        ),
+        (
+            "exit submitted: "
+            f"{cycle.exit_order_submitted}"
+        ),
+        (
+            "entry placements: "
+            f"{cycle.placement_count}"
+        ),
+        (
+            "entry placement failures: "
+            f"{cycle.placement_failure_count}"
+        ),
+    ]
+
+    # Keep this formatter tolerant of lightweight
+    # test doubles that may not expose the full
+    # production entry outcome.
+    if hasattr(
+        entry,
+        "status",
+    ):
+        status = entry.status
+
+        status_text = getattr(
+            status,
+            "value",
+            str(status),
+        )
+
+        selected_symbols = getattr(
+            entry,
+            "universe_selected_symbols",
+            (),
+        )
+
+        selected_text = (
+            ", ".join(
+                selected_symbols
+            )
+            if selected_symbols
+            else "none"
+        )
+
+        reason = getattr(
+            entry,
+            "reason",
+            None,
+        )
+
+        lines.extend(
+            (
+                (
+                    "entry cycle status: "
+                    f"{status_text}"
+                ),
+                (
+                    "entry cycle reason: "
+                    f"{reason or 'none'}"
+                ),
+                (
+                    "universe selected: "
+                    f"{selected_text}"
+                ),
+                (
+                    "universe errors: "
+                    f"{getattr(entry, 'universe_error_count', 0)}"
+                ),
+                (
+                    "universe rejected: "
+                    f"{getattr(entry, 'universe_rejected_count', 0)}"
+                ),
+                (
+                    "universe deferred: "
+                    f"{getattr(entry, 'universe_deferred_count', 0)}"
+                ),
+                (
+                    "loaded candidates: "
+                    f"{getattr(entry, 'loaded_candidate_count', 0)}"
+                ),
+                (
+                    "eligible entries: "
+                    f"{getattr(entry, 'eligible_entry_count', 0)}"
+                ),
+                (
+                    "market data errors: "
+                    f"{getattr(entry, 'market_data_error_count', 0)}"
+                ),
+                (
+                    "review errors: "
+                    f"{getattr(entry, 'review_error_count', 0)}"
+                ),
+                (
+                    "placement blocked: "
+                    f"{getattr(entry, 'placement_blocked_count', 0)}"
+                ),
+            )
+        )
+
+    strategy_cycle = getattr(
+        entry,
+        "cycle",
+        None,
+    )
+
+    strategy = (
+        getattr(
+            strategy_cycle,
+            "strategy",
+            None,
+        )
+        if strategy_cycle is not None
+        else None
+    )
+
+    review_items = (
+        getattr(
+            strategy,
+            "items",
+            (),
+        )
+        if strategy is not None
+        else ()
+    )
+
+    for item in review_items:
+        lines.append(
+            f"entry candidate: {item.symbol}"
+        )
+
+        if item.error is not None:
+            lines.extend(
+                (
+                    "  outcome: error",
+                    (
+                        "  error: "
+                        f"{item.error}"
+                    ),
+                )
+            )
+
+            continue
+
+        review_outcome = item.outcome
+
+        if review_outcome is None:
+            lines.append(
+                "  outcome: unavailable"
+            )
+            continue
+
+        status = review_outcome.status
+
+        status_text = getattr(
+            status,
+            "value",
+            str(status),
+        )
+
+        decision = (
+            review_outcome.decision
+        )
+
+        confirmation_reasons = sorted(
+            (
+                getattr(
+                    reason,
+                    "value",
+                    str(reason),
+                )
+                for reason
+                in decision.confirmation.reasons
+            )
+        )
+
+        risk_reasons = sorted(
+            (
+                getattr(
+                    reason,
+                    "value",
+                    str(reason),
+                )
+                for reason
+                in decision.risk.reasons
+            )
+        )
+
+        lines.extend(
+            (
+                (
+                    "  status: "
+                    f"{status_text}"
+                ),
+                (
+                    "  eligible to place: "
+                    f"{review_outcome.eligible_to_place}"
+                ),
+                (
+                    "  reason: "
+                    f"{review_outcome.reason or 'none'}"
+                ),
+                (
+                    "  confirmation approved: "
+                    f"{decision.confirmation.approved}"
+                ),
+                (
+                    "  confirmation reasons: "
+                    + (
+                        ", ".join(
+                            confirmation_reasons
+                        )
+                        if confirmation_reasons
+                        else "none"
+                    )
+                ),
+                (
+                    "  risk approved: "
+                    f"{decision.risk.approved}"
+                ),
+                (
+                    "  risk reasons: "
+                    + (
+                        ", ".join(
+                            risk_reasons
+                        )
+                        if risk_reasons
+                        else "none"
+                    )
+                ),
+                (
+                    "  execution plan built: "
+                    f"{review_outcome.execution_plan is not None}"
+                ),
+                (
+                    "  broker review performed: "
+                    f"{review_outcome.review is not None}"
+                ),
+            )
+        )
+
+        if review_outcome.review is not None:
+            lines.append(
+                (
+                    "  broker review approved: "
+                    f"{review_outcome.review.approved}"
+                )
+            )
 
     return "\n".join(
-        (
-            "Robinhood equity runtime run",
-            (
-                "live requested: "
-                f"{outcome.live_execution_requested}"
-            ),
-            (
-                "live enabled: "
-                f"{outcome.live_execution_enabled}"
-            ),
-            (
-                "exit submitted: "
-                f"{cycle.exit_order_submitted}"
-            ),
-            (
-                "entry placements: "
-                f"{cycle.placement_count}"
-            ),
-            (
-                "entry placement failures: "
-                f"{cycle.placement_failure_count}"
-            ),
-        )
+        lines
     )
 
 

@@ -1,5 +1,5 @@
 import unittest
-
+from unittest.mock import Mock
 from contextlib import contextmanager
 from datetime import (
     datetime,
@@ -263,6 +263,106 @@ class RobinhoodRuntimeRunnerTests(
 
         runtime_opener.assert_not_called()
         cycle_runner.assert_not_called()
+
+    def test_forwards_execution_clock_to_cycle_runner(
+        self,
+    ) -> None:
+        runtime = SimpleNamespace(
+            live_execution_requested=False,
+            live_execution_enabled=False,
+        )
+
+        expected = object()
+
+        cycle_calls = []
+
+        @contextmanager
+        def runtime_opener(
+            **kwargs,
+        ):
+            yield runtime
+
+        def cycle_runner(
+            received_runtime,
+            **kwargs,
+        ):
+            cycle_calls.append(
+                (
+                    received_runtime,
+                    kwargs,
+                )
+            )
+
+            return expected
+
+        execution_clock = Mock()
+
+        result = (
+            run_robinhood_equity_runtime_once(
+                account_number=(
+                    "agentic-account"
+                ),
+                allowed_symbols=(
+                    "AAPL",
+                ),
+                universe_policy=(
+                    _POLICY
+                ),
+                not_found_grace_period=(
+                    timedelta(
+                        seconds=120
+                    )
+                ),
+                evaluated_at=(
+                    _EVALUATED_AT
+                ),
+                budget=Decimal("5"),
+                env={},
+                execution_clock=(
+                    execution_clock
+                ),
+                runtime_opener=(
+                    runtime_opener
+                ),
+                cycle_runner=(
+                    cycle_runner
+                ),
+            )
+        )
+
+        self.assertIs(
+            result.cycle,
+            expected,
+        )
+
+        self.assertEqual(
+            len(cycle_calls),
+            1,
+        )
+
+        (
+            received_runtime,
+            kwargs,
+        ) = cycle_calls[0]
+
+        self.assertIs(
+            received_runtime,
+            runtime,
+        )
+
+        self.assertIs(
+            kwargs[
+                "execution_clock"
+            ],
+            execution_clock,
+        )
+
+        self.assertEqual(
+            kwargs[
+                "evaluated_at"
+            ],
+            _EVALUATED_AT,
+        )
 
 
 if __name__ == "__main__":
