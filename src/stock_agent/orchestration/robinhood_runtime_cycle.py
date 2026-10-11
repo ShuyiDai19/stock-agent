@@ -317,6 +317,7 @@ def run_robinhood_equity_exit_cycle_from_runtime(
                 runtime.broker,
                 runtime
                 .equity_exit_price_provider,
+                clock=effective_clock,
             )
         )
     else:

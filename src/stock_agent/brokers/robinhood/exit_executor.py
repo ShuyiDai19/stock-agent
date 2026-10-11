@@ -1,7 +1,11 @@
 from collections.abc import Callable
 from uuid import uuid4
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+from stock_agent.market_data.freshness import (
+    DEFAULT_MAX_QUOTE_AGE,
+    require_fresh_quote_timestamp,
+)
 from stock_agent.brokers.robinhood.orders import (
     RobinhoodExitOrderRequest,
     build_robinhood_exit_order_request,
@@ -60,6 +64,10 @@ class LiveRobinhoodExitExecutor:
         price_provider: RobinhoodExitPriceProvider,
         *,
         ref_id_factory: Callable[[], str] | None = None,
+        clock: Callable[[], datetime] | None = None,
+        max_quote_age: timedelta = (
+            DEFAULT_MAX_QUOTE_AGE
+        ),
     ) -> None:
         self._client = client
         self._price_provider = price_provider
@@ -67,6 +75,26 @@ class LiveRobinhoodExitExecutor:
             ref_id_factory
             or (lambda: str(uuid4()))
         )
+        self._clock = (
+            clock
+            or (
+                lambda: datetime.now(
+                    timezone.utc
+                )
+            )
+        )
+        self._max_quote_age = (
+            max_quote_age
+        )
+
+        if (
+            self._max_quote_age
+            <= timedelta(0)
+        ):
+            raise ValueError(
+                "max_quote_age must be positive"
+            )
+
 
     def execute(
         self,
@@ -78,6 +106,12 @@ class LiveRobinhoodExitExecutor:
 
         quote = self._price_provider.get_exit_price(
             request
+        )
+
+        require_fresh_quote_timestamp(
+            observed_at=quote.observed_at,
+            evaluated_at=self._clock(),
+            max_quote_age=self._max_quote_age,
         )
 
         ref_id = self._ref_id_factory()
@@ -101,6 +135,13 @@ class LiveRobinhoodExitExecutor:
             raise RobinhoodOrderReviewRejectedError(
                 "Robinhood exit order review was not approved"
             )
+
+        require_fresh_quote_timestamp(
+            observed_at=quote.observed_at,
+            evaluated_at=self._clock(),
+            max_quote_age=self._max_quote_age,
+        )
+
 
         receipt = self._client.submit_exit_order(
             submission

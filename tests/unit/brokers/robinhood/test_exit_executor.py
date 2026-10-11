@@ -1,5 +1,9 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import (
+    datetime,
+    timedelta,
+    timezone,
+)
 from decimal import Decimal
 from dataclasses import replace
 
@@ -379,6 +383,7 @@ class RobinhoodExitExecutorTests(unittest.TestCase):
             client,
             price_provider,
             ref_id_factory=lambda: self.EQUITY_REF_ID,
+            clock=lambda: submitted_at,
         )
 
         result = executor.execute(intent)
@@ -911,6 +916,265 @@ class RobinhoodExitExecutorTests(unittest.TestCase):
         self.assertEqual(
             client.submit_call_count,
             0,
+        )
+
+        self.assertIsNone(
+            client.received_submission,
+        )
+
+    def test_live_executor_rejects_stale_quote_before_review(
+        self,
+    ) -> None:
+        observed_at = datetime(
+            2026,
+            10,
+            10,
+            18,
+            0,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        now = (
+            observed_at
+            + timedelta(seconds=31)
+        )
+
+        intent = ExitIntent(
+            position_id=(
+                "account-9628:"
+                "equity:AAPL:order-123"
+            ),
+            account_number="account-9628",
+            asset_type=AssetType.EQUITY,
+            symbol="AAPL",
+            quantity=Decimal("0.031"),
+            reason=ExitReason.TRAILING_STOP,
+            triggered_at=observed_at,
+            option_id=None,
+        )
+
+        client = FakeRobinhoodClient()
+
+        price_provider = (
+            FakeRobinhoodExitPriceProvider(
+                RobinhoodExitPriceQuote(
+                    symbol="AAPL",
+                    executable_bid=Decimal(
+                        "107.55"
+                    ),
+                    observed_at=observed_at,
+                )
+            )
+        )
+
+        executor = LiveRobinhoodExitExecutor(
+            client,
+            price_provider,
+            ref_id_factory=(
+                lambda: self.EQUITY_REF_ID
+            ),
+            clock=lambda: now,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "quote is stale",
+        ):
+            executor.execute(intent)
+
+        self.assertEqual(
+            price_provider
+            .get_exit_price_call_count,
+            1,
+        )
+
+        self.assertEqual(
+            client.review_call_count,
+            0,
+        )
+
+        self.assertEqual(
+            client.submit_call_count,
+            0,
+        )
+
+        self.assertIsNone(
+            client.received_review_submission,
+        )
+
+        self.assertIsNone(
+            client.received_submission,
+        )
+
+    def test_live_executor_rejects_future_quote_before_review(
+        self,
+    ) -> None:
+        now = datetime(
+            2026,
+            10,
+            10,
+            18,
+            0,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        observed_at = (
+            now
+            + timedelta(seconds=1)
+        )
+
+        intent = ExitIntent(
+            position_id=(
+                "account-9628:"
+                "equity:AAPL:order-123"
+            ),
+            account_number="account-9628",
+            asset_type=AssetType.EQUITY,
+            symbol="AAPL",
+            quantity=Decimal("0.031"),
+            reason=ExitReason.TRAILING_STOP,
+            triggered_at=now,
+            option_id=None,
+        )
+
+        client = FakeRobinhoodClient()
+
+        price_provider = (
+            FakeRobinhoodExitPriceProvider(
+                RobinhoodExitPriceQuote(
+                    symbol="AAPL",
+                    executable_bid=Decimal(
+                        "107.55"
+                    ),
+                    observed_at=observed_at,
+                )
+            )
+        )
+
+        executor = LiveRobinhoodExitExecutor(
+            client,
+            price_provider,
+            ref_id_factory=(
+                lambda: self.EQUITY_REF_ID
+            ),
+            clock=lambda: now,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "quote cannot be from the future",
+        ):
+            executor.execute(intent)
+
+        self.assertEqual(
+            client.review_call_count,
+            0,
+        )
+
+        self.assertEqual(
+            client.submit_call_count,
+            0,
+        )
+
+        self.assertIsNone(
+            client.received_review_submission,
+        )
+
+        self.assertIsNone(
+            client.received_submission,
+        )
+
+    def test_live_executor_rechecks_quote_freshness_before_submit(
+        self,
+    ) -> None:
+        observed_at = datetime(
+            2026,
+            10,
+            10,
+            18,
+            0,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        clock_values = iter(
+            (
+                observed_at
+                + timedelta(seconds=10),
+                observed_at
+                + timedelta(seconds=31),
+            )
+        )
+
+        intent = ExitIntent(
+            position_id=(
+                "account-9628:"
+                "equity:AAPL:order-123"
+            ),
+            account_number="account-9628",
+            asset_type=AssetType.EQUITY,
+            symbol="AAPL",
+            quantity=Decimal("0.031"),
+            reason=ExitReason.TRAILING_STOP,
+            triggered_at=observed_at,
+            option_id=None,
+        )
+
+        client = FakeRobinhoodClient()
+
+        price_provider = (
+            FakeRobinhoodExitPriceProvider(
+                RobinhoodExitPriceQuote(
+                    symbol="AAPL",
+                    executable_bid=Decimal(
+                        "107.55"
+                    ),
+                    observed_at=observed_at,
+                )
+            )
+        )
+
+        executor = LiveRobinhoodExitExecutor(
+            client,
+            price_provider,
+            ref_id_factory=(
+                lambda: self.EQUITY_REF_ID
+            ),
+            clock=lambda: next(
+                clock_values
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "quote is stale",
+        ):
+            executor.execute(intent)
+
+        self.assertEqual(
+            price_provider
+            .get_exit_price_call_count,
+            1,
+        )
+
+        # First freshness check passed,
+        # so broker review did occur.
+        self.assertEqual(
+            client.review_call_count,
+            1,
+        )
+
+        # Second freshness check failed,
+        # so broker write must not occur.
+        self.assertEqual(
+            client.submit_call_count,
+            0,
+        )
+
+        self.assertIsNotNone(
+            client.received_review_submission,
         )
 
         self.assertIsNone(
